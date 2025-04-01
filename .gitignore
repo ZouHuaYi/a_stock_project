@@ -1,0 +1,10 @@
+logs/*
+venv
+.env
+_pycache_
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
