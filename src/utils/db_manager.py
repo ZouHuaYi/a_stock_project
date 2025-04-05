@@ -142,5 +142,41 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"记录同步状态失败: {e}")
 
+    def check_data_exists(self, table_name, stock_code, trade_date):
+        """
+        检查数据是否已存在
+        
+        参数:
+            table_name (str): 表名
+            stock_code (str): 股票代码
+            trade_date (str/datetime): 交易日期
+        
+        返回:
+            bool: 存在返回True，不存在返回False
+        """
+        try:
+            # 确保trade_date是字符串格式
+            if isinstance(trade_date, datetime):
+                trade_date = trade_date.strftime('%Y-%m-%d')
+            
+            # 构建SQL查询，注意表名不要用单引号括起来
+            sql = f"""
+                SELECT COUNT(*) as count
+                FROM {table_name}
+                WHERE stock_code = '{stock_code}'
+                AND trade_date = '{trade_date}'
+            """
+            
+            # 执行查询
+            with self.engine.connect() as conn:
+                result = conn.execute(text(sql)).fetchone()
+                count = result[0] if result else 0
+                
+                return count > 0
+        except Exception as e:
+            logger.error(f"检查数据存在性失败: {e}")
+            # 如果查询失败，返回False以允许插入尝试
+            return False
+
 # 创建全局数据库管理器实例
 db_manager = DatabaseManager() 
