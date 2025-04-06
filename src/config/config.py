@@ -1,6 +1,8 @@
 import os
 from datetime import datetime, timedelta
 
+
+DEEPSEEK_API_KEY = "sk-10c1f39426484070bfb5d62060621cb0"
 # 运行环境的根目录
 BASE_DIR = os.getcwd()
 
