@@ -78,4 +78,4 @@ def init_select_data_day(trade_date):
 if __name__ == "__main__":
     # init_stock_basic()
     # init_stock_daily()
-    init_select_data_day('20250403')
+    init_select_data_day('20250407')

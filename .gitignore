@@ -1,7 +1,10 @@
 logs/*
 venv
 .env
-_pycache_
+__pycache__
+caches/*
+config/*
+datas/*
 *.pyc
 *.pyo
 *.pyd

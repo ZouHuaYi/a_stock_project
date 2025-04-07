@@ -2,9 +2,13 @@ import os
 from datetime import datetime, timedelta
 
 
-DEEPSEEK_API_KEY = "sk-10c1f39426484070bfb5d62060621cb0"
 # 运行环境的根目录
 BASE_DIR = os.getcwd()
+
+DEEPSEEK_API_KEY = "sk-10c1f39426484070bfb5d62060621cb0"
+# API 密钥配置
+GEMINI_API_KEY = "AIzaSyCFAtwnct2LiAjI9YTiN_e1GyZkpgYn9pw"  # 替换为你的 Google Gemini API 密钥
+TAVILY_API_KEY = "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"  # 替换为你的 Tavily API 密钥
 
 # 数据库配置
 DB_CONFIG = {
