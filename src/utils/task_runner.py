@@ -14,6 +14,7 @@ class TaskRunner:
         self.use_threads = use_threads
         self.max_workers = max_workers
         self.executor = ThreadPoolExecutor(max_workers) if use_threads else ProcessPoolExecutor(max_workers)
+        self.futures = []  # 存储所有提交的任务
 
     def run_tasks(self, task_func, task_args_list, timeout=None):
         """
@@ -36,6 +37,37 @@ class TaskRunner:
                     results.append(f"Task timed out after {timeout} seconds")
                 except Exception as e:
                     results.append(f"Task failed with error: {str(e)}")
+        return results
+    
+    def submit_task(self, task_func, *args):
+        """
+        提交单个任务到执行器
+        :param task_func: 要执行的任务函数
+        :param args: 任务函数的参数
+        :return: Future 对象
+        """
+        future = self.executor.submit(task_func, *args)
+        self.futures.append(future)
+        return future
+    
+    def wait_all_done(self, timeout=None):
+        """
+        等待所有已提交的任务完成
+        :param timeout: 每个任务的超时时间（秒），可选
+        :return: 任务结果列表
+        """
+        results = []
+        for future in self.futures:
+            try:
+                result = future.result(timeout=timeout)
+                results.append(result)
+            except TimeoutError:
+                results.append(f"Task timed out after {timeout} seconds")
+            except Exception as e:
+                results.append(f"Task failed with error: {str(e)}")
+        
+        # 清空futures列表，以便后续复用
+        self.futures = []
         return results
 
     def __enter__(self):
@@ -73,4 +105,16 @@ if __name__ == "__main__":
     cpu_tasks = [(5,), (10,), (15,)]
     cpu_results = cpu_runner.run_tasks(cpu_task, cpu_tasks)
     for result in cpu_results:
+        print(result)
+        
+    # 3. 测试单独提交任务
+    print("\n=== 测试单独提交任务 ===")
+    runner = TaskRunner(max_workers=3)
+    runner.submit_task(io_task, "任务A")
+    runner.submit_task(io_task, "任务B")
+    runner.submit_task(cpu_task, 20)
+    
+    # 等待所有任务完成并获取结果
+    results = runner.wait_all_done()
+    for result in results:
         print(result)
