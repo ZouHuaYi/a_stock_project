@@ -5,27 +5,47 @@ import pandas as pd
 from src.utils.task_runner import TaskRunner
 
 def init_stock_basic():
+    """更新股票的 industry market_cap"""
     stock_api = StockAPI()
-    stock_list = stock_api.get_stock_list()
+    db_manager = DatabaseManager()
+    # 获取股票列表
+    stock_list = db_manager.get_all_data('stock_basic')
 
     # 确保stock_list不为空
     if stock_list is None or stock_list.empty:
         print("获取股票列表失败")
         return
-        
-    db_manager = DatabaseManager()
-
-    def get_stock_info_task(stock_code):
-        """获取单个股票信息的任务函数"""
-        print(f"正在获取股票信息: {stock_code}")
-        stock_info = stock_api.get_stock_info(stock_code)
-        stock_info_df = pd.DataFrame([stock_info])
-        db_manager.save_data(stock_info_df, 'stock_basic', 'append')
-        return stock_info
     
-    for stock_code in stock_list['stock_code']:
-        get_stock_info_task(stock_code)
+    # 更新股票的 industry market_cap
+    for index, row in stock_list.iterrows():
+        stock_info = stock_api.get_stock_info(row['stock_code'])
+        if stock_info is not None:
+            # 使用 db_manager 更新
+            sql = f"""
+                UPDATE stock_basic SET market_cap = '{stock_info['market_cap']}', updated_at = '{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}', industry = '{stock_info['industry']}' WHERE id = {row['id']}
+            """ 
+            db_manager.execute_sql(sql)
+            print(f"更新股票 {row['stock_code']} 的 market_cap 和 industry")
 
+    db_manager.close()
+
+def supplement_save_stock_daily_data(trade_date):
+    """补充保存股票日线数据"""
+    stock_api = StockAPI()
+    db_manager = DatabaseManager()
+    # 获取股票列表
+    stock_list = db_manager.get_all_data('stock_basic')
+    # 确保stock_list不为空
+    if stock_list is None or stock_list.empty:
+        print("获取股票列表失败")
+        return
+    # 获取今天日期
+    for stock_code in stock_list['stock_code']:
+        if not db_manager.check_data_exists('stock_daily', stock_code, trade_date):
+            stock_daily = stock_api.get_daily_data(stock_code=stock_code, start_date=trade_date, end_date=trade_date)
+            print(f"获取股票 {stock_code} 的日线数据")
+            if stock_daily is not None:
+                db_manager.save_data(stock_daily, 'stock_daily', 'append')
     db_manager.close()
 
 def save_stock_daily_data(db_manager, stock_list, start_date, end_date):
@@ -119,4 +139,5 @@ def init_select_data_day(trade_date):
 if __name__ == "__main__":
     # init_stock_basic()
     # init_stock_daily()
-    init_select_data_day('20190408')
+    # init_select_data_day('20190408')
+    init_stock_basic()

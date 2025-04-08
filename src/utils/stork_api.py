@@ -45,10 +45,10 @@ class StockAPI:
                 return {
                     'stock_code': stock_code, 
                     'exchange': pure_codes[1], # 交易所
-                    'stock_name': stock_info.iloc[1, 1], # 名称
-                    'industry': stock_info.iloc[6, 1], # 行业
-                    'list_date': stock_info.iloc[7, 1], # 上市日期
-                    'market_cap': stock_info.iloc[4, 1], # 总市值
+                    'stock_name': stock_info.iloc[5, 1], # 名称
+                    'industry': stock_info.iloc[2, 1], # 行业
+                    'list_date': stock_info.iloc[3, 1], # 上市日期
+                    'market_cap': stock_info.iloc[0, 1], # 总市值
                 }
         except Exception as e:
             logger.warning(f"通过AKShare获取股票信息失败: {e}")

@@ -780,6 +780,6 @@ class AStockAnalyzer:
 
 if __name__ == "__main__":
     analyzer = AStockAnalyzer("000001", "1y")
-    analyzer.run_analysis(context="白酒行业龙头，具有较强品牌溢价能力")
+    analyzer.run_analysis(context="金融行业龙头，具有较强品牌溢价能力")
 
 
