@@ -22,7 +22,7 @@ def init_stock_basic():
         if stock_info is not None:
             # 使用 db_manager 更新
             sql = f"""
-                UPDATE stock_basic SET market_cap = '{stock_info['market_cap']}', updated_at = '{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}', industry = '{stock_info['industry']}' WHERE id = {row['id']}
+                UPDATE stock_basic SET market_cap = '{stock_info['market_cap']}', industry = '{stock_info['industry']}' WHERE id = {row['id']}
             """ 
             db_manager.execute_sql(sql)
             print(f"更新股票 {row['stock_code']} 的 market_cap 和 industry")

@@ -115,7 +115,10 @@ class DatabaseManager:
         """执行SQL语句"""
         try:
             with self.engine.connect() as conn:
-                return conn.execute(text(sql))
+                trans = conn.begin()  # 开始事务
+                conn.execute(text(sql))
+                trans.commit()  # 提交事务
+                return True
         except Exception as e:
             logger.error(f"执行SQL语句失败: {e}")
             return None

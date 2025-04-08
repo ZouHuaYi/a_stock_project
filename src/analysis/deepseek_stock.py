@@ -12,6 +12,7 @@ from wordcloud import WordCloud
 import matplotlib.font_manager as fm
 import google.generativeai as genai
 from src.config.config import GEMINI_API_KEY, TAVILY_API_KEY
+from src.utils.llm_api import LLMAPI
 
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
@@ -36,6 +37,7 @@ class AStockAnalyzer:
         self.news_data = None
         self.financial_reports = None
         self.analysis_report = ""
+        self.llm = LLMAPI()
         
     def fetch_stock_data(self):
         """从AKShare获取A股历史数据"""
@@ -108,41 +110,11 @@ class AStockAnalyzer:
             }
             
             # 依次尝试不同的认证方式
-            return (self._try_tavily_with_header_api_key(query, payload, days) or 
-                    self._try_tavily_with_bearer_token(query, payload, days) or 
-                    self._try_tavily_with_url_param(query, payload, days) or 
-                    self._use_mock_news_data(days))
+            return self._try_tavily_with_bearer_token(query, payload, days)
                 
         except Exception as e:
             print(f"获取新闻舆情失败: {e}")
             return self._use_mock_news_data(days)
-    
-    def _try_tavily_with_header_api_key(self, query, payload, days):
-        """使用Header X-Api-Key认证方式尝试调用Tavily API"""
-        try:
-            print("尝试使用X-Api-Key认证方式...")
-            headers = {
-                "Content-Type": "application/json",
-                "X-Api-Key": TAVILY_API_KEY
-            }
-            
-            response = requests.post(
-                "https://api.tavily.com/search",
-                headers=headers,
-                json=payload,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                return self._process_tavily_response(response, days)
-            else:
-                print(f"X-Api-Key认证方式失败 (HTTP {response.status_code})")
-                if response.status_code != 401:  # 仅在非认证错误时显示响应
-                    print(f"响应内容: {response.text}")
-                return False
-        except Exception as e:
-            print(f"X-Api-Key认证尝试出错: {e}")
-            return False
     
     def _try_tavily_with_bearer_token(self, query, payload, days):
         """使用Bearer Token认证方式尝试调用Tavily API"""
@@ -169,38 +141,6 @@ class AStockAnalyzer:
                 return False
         except Exception as e:
             print(f"Bearer Token认证尝试出错: {e}")
-            return False
-    
-    def _try_tavily_with_url_param(self, query, payload, days):
-        """使用URL参数认证方式尝试调用Tavily API"""
-        try:
-            print("尝试使用URL参数认证方式...")
-            # 将payload参数转换为URL参数
-            params = {
-                "api_key": TAVILY_API_KEY,
-                "query": query,
-                "search_depth": payload["search_depth"],
-                "max_results": payload["max_results"],
-            }
-            if "include_domains" in payload:
-                domains = ",".join(payload["include_domains"])
-                params["include_domains"] = domains
-            
-            response = requests.get(
-                "https://api.tavily.com/search",
-                params=params,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                return self._process_tavily_response(response, days)
-            else:
-                print(f"URL参数认证方式失败 (HTTP {response.status_code})")
-                if response.status_code != 401:  # 仅在非认证错误时显示响应
-                    print(f"响应内容: {response.text}")
-                return False
-        except Exception as e:
-            print(f"URL参数认证尝试出错: {e}")
             return False
     
     def _process_tavily_response(self, response, days):
@@ -623,36 +563,12 @@ class AStockAnalyzer:
             """
             
             try:
-                # 配置Gemini模型
-                generation_config = {
-                    "temperature": 0.7,
-                    "top_p": 0.95,
-                    "top_k": 64,
-                    "max_output_tokens": 2024,  # 减少token使用量
-                }
-                
-                model = genai.GenerativeModel(
-                    model_name="gemini-1.5-pro",
-                    generation_config=generation_config,
-                )
-                
-                # 生成分析报告
-                response = model.generate_content(prompt)
-                self.analysis_report = response.text
+                # self.analysis_report = self.llm.generate_gemini_response(prompt)
+                self.analysis_report = self.llm.generate_deepseek_response(prompt)
                 return self.analysis_report
                 
             except Exception as e:
                 print(f"Gemini API调用错误: {e}")
-                # 尝试使用备用模型
-                try:
-                    print("尝试使用备用模型...")
-                    fallback_model = genai.GenerativeModel("gemini-1.0-pro")
-                    response = fallback_model.generate_content(prompt)
-                    self.analysis_report = response.text
-                    return self.analysis_report
-                except Exception as e2:
-                    print(f"备用模型调用失败: {e2}")
-                    return f"无法生成分析报告: {str(e)}"
             
         except Exception as e:
             print(f"调用AI分析API出错: {e}")
