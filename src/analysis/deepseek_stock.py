@@ -10,17 +10,14 @@ import jieba
 from collections import Counter
 from wordcloud import WordCloud
 import matplotlib.font_manager as fm
-import google.generativeai as genai
 from src.config.config import GEMINI_API_KEY, TAVILY_API_KEY
 from src.utils.llm_api import LLMAPI
+from src.utils.tavily_api import TavilyAPI
 
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
-
-# 配置Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
 
 class AStockAnalyzer:
     def __init__(self, stock_code, period="1y"):
@@ -38,7 +35,8 @@ class AStockAnalyzer:
         self.financial_reports = None
         self.analysis_report = ""
         self.llm = LLMAPI()
-        
+        self.tavily_api = TavilyAPI()
+
     def fetch_stock_data(self):
         """从AKShare获取A股历史数据"""
         try:
@@ -89,14 +87,10 @@ class AStockAnalyzer:
     
     def fetch_news_sentiment(self, days=30):
         """使用Tavily获取新闻舆情数据"""
-        try:
-            if not TAVILY_API_KEY or TAVILY_API_KEY == "your_tavily_api_key_here":
-                print("未配置有效的Tavily API密钥，使用模拟数据")
-                return self._use_mock_news_data(days)
-                
+        try:    
             # 确保股票名称已获取
             if not self.stock_name:
-                raise ValueError("股票名称未获取，请先调用fetch_stock_data")
+                raise ValueError("未获取股票名称")
             
             print(f"正在使用Tavily搜索{self.stock_name}的相关新闻...")
             
@@ -104,148 +98,20 @@ class AStockAnalyzer:
             query = f"{self.stock_code} {self.stock_name} 股票"
             payload = {
                 "query": query,
-                "search_depth": "basic",  # 免费API使用basic深度
-                "max_results": 10,  # 减少结果数量
+                "search_depth": "basic",  
+                "max_results": 10, 
                 "include_domains": ["eastmoney.com", "sina.com.cn", "10jqka.com.cn"]
             }
             
             # 依次尝试不同的认证方式
-            return self._try_tavily_with_bearer_token(query, payload, days)
-                
+            response = self.tavily_api.search_base_news(payload)
+            if response:
+                self.news_data = self.tavily_api.process_tavily_response(response)
+                return True   
+            else:
+                return False
         except Exception as e:
             print(f"获取新闻舆情失败: {e}")
-            return self._use_mock_news_data(days)
-    
-    def _try_tavily_with_bearer_token(self, query, payload, days):
-        """使用Bearer Token认证方式尝试调用Tavily API"""
-        try:
-            print("尝试使用Bearer Token认证方式...")
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {TAVILY_API_KEY}"
-            }
-            
-            response = requests.post(
-                "https://api.tavily.com/search",
-                headers=headers,
-                json=payload,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                return self._process_tavily_response(response, days)
-            else:
-                print(f"Bearer Token认证方式失败 (HTTP {response.status_code})")
-                if response.status_code != 401:  # 仅在非认证错误时显示响应
-                    print(f"响应内容: {response.text}")
-                return False
-        except Exception as e:
-            print(f"Bearer Token认证尝试出错: {e}")
-            return False
-    
-    def _process_tavily_response(self, response, days):
-        """处理Tavily API的成功响应"""
-        try:
-            results = response.json()
-            
-            # 提取新闻数据
-            news_samples = []
-            for result in results.get("results", []):
-                title = result.get("title", "")
-                sentiment = 0.5  # 默认中性
-                
-                # 简单规则：基于关键词的情感判断
-                pos_words = ["利好", "增长", "提升", "突破", "上涨", "盈利", "利润"]
-                neg_words = ["下跌", "亏损", "减持", "风险", "警示", "下滑", "退市"]
-                
-                for word in pos_words:
-                    if word in title:
-                        sentiment += 0.1
-                
-                for word in neg_words:
-                    if word in title:
-                        sentiment -= 0.1
-                
-                # 将情感值限制在[-1, 1]范围内
-                sentiment = max(-1, min(1, sentiment))
-                
-                publish_date = result.get("published_date", datetime.now().strftime("%Y-%m-%d"))
-                
-                news_samples.append({
-                    "title": title,
-                    "date": publish_date,
-                    "sentiment": sentiment,
-                    "url": result.get("url", "")
-                })
-            
-            if not news_samples:
-                print("未找到相关新闻，使用模拟数据")
-                return False
-            
-            self.news_data = pd.DataFrame(news_samples)
-            self.news_data['date'] = pd.to_datetime(self.news_data['date'])
-            
-            print(f"成功获取 {self.stock_name} 的新闻舆情数据 ({len(news_samples)}条)")
-            return True
-            
-        except Exception as e:
-            print(f"处理Tavily响应时出错: {e}")
-            return False
-    
-    def _use_mock_news_data(self, days=30):
-        """使用模拟数据作为备选"""
-        try:
-            print("使用模拟新闻数据...")
-            # 使用模拟数据，实际应用中可接入财经新闻API
-            end_date = datetime.now()
-            
-            # 确保stock_name存在
-            stock_name = "股票"
-            if hasattr(self, 'stock_name') and self.stock_name:
-                stock_name = self.stock_name
-            elif hasattr(self, 'stock_code'):
-                stock_name = f"股票{self.stock_code}"
-                
-            # 模拟新闻数据 - 更丰富的模板
-            templates = [
-                {"title": f"{stock_name}发布年度财报，净利润增长", "sentiment": 0.8},
-                {"title": f"行业政策利好，{stock_name}有望受益", "sentiment": 0.7},
-                {"title": f"{stock_name}高管增持公司股份", "sentiment": 0.6},
-                {"title": f"分析师看好{stock_name}未来发展前景", "sentiment": 0.5},
-                {"title": f"{stock_name}新产品获市场认可", "sentiment": 0.9},
-                {"title": f"{stock_name}大股东减持股份", "sentiment": -0.5},
-                {"title": f"{stock_name}业绩低于市场预期", "sentiment": -0.6},
-                {"title": f"监管部门关注{stock_name}相关问题", "sentiment": -0.4},
-                {"title": f"{stock_name}面临行业竞争加剧", "sentiment": -0.3},
-                {"title": f"{stock_name}宣布重大投资计划", "sentiment": 0.7}
-            ]
-            
-            # 随机选择5-7条新闻
-            import random
-            num_news = random.randint(5, 7)
-            selected_templates = random.sample(templates, min(num_news, len(templates)))
-            
-            news_samples = []
-            for i, template in enumerate(selected_templates):
-                days_ago = random.randint(1, min(days, 30))
-                news_date = (end_date - timedelta(days=days_ago)).strftime('%Y-%m-%d')
-                news_samples.append({
-                    "title": template["title"],
-                    "date": news_date,
-                    "sentiment": template["sentiment"],
-                    "url": "#"
-                })
-            
-            # 按日期排序
-            news_samples.sort(key=lambda x: x["date"], reverse=True)
-            
-            self.news_data = pd.DataFrame(news_samples)
-            self.news_data['date'] = pd.to_datetime(self.news_data['date'])
-            
-            print(f"已生成 {len(news_samples)} 条模拟新闻数据")
-            return True
-        except Exception as e:
-            print(f"生成模拟数据失败: {e}")
             return False
     
     def calculate_technical_indicators(self):
@@ -338,9 +204,7 @@ class AStockAnalyzer:
             return None
 
         print(f"成功获取到 {len(self.financial_reports)} 条财务指标记录。")
-        # print("\n原始数据预览:")
-        # print(financial_indicator_df.head()) # 显示前几行数据
-
+       
         # --- 3. 数据处理与选择关键指标 ---
         # 数据通常按报告日期降序排列，第一行是最新的
         latest_data = self.financial_reports.iloc[0] # 获取最新一期的数据
