@@ -1,18 +1,13 @@
-import akshare as ak
-import pandas as pd
-import numpy as np
+import os
 import matplotlib.pyplot as plt
-import pandas_ta as ta
-from datetime import datetime, timedelta
-import requests
-import json
+from datetime import datetime
 import jieba
 from collections import Counter
 from wordcloud import WordCloud
 import matplotlib.font_manager as fm
-from src.config.config import GEMINI_API_KEY, TAVILY_API_KEY
 from src.utils.llm_api import LLMAPI
 from src.utils.tavily_api import TavilyAPI
+from src.utils.akshare_api import AkshareAPI
 
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
@@ -20,11 +15,12 @@ plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
 class AStockAnalyzer:
-    def __init__(self, stock_code, period="1y"):
+    def __init__(self, stock_code, period="1y", ai_type="deepseek"):
         """
         初始化A股分析器
         :param stock_code: 股票代码，如 '600519' (贵州茅台)
         :param period: 数据周期，如 '1y' (1年)
+        :param ai_type: 分析模型，如 'gemini' (Gemini-1.5 Pro) 或 'deepseek' (DeepSeek-V3)
         """
         self.stock_code = stock_code
         self.period = period
@@ -34,39 +30,27 @@ class AStockAnalyzer:
         self.news_data = None
         self.financial_reports = None
         self.analysis_report = ""
+        self.ai_type = ai_type
         self.llm = LLMAPI()
         self.tavily_api = TavilyAPI()
+        self.akshare = AkshareAPI()
 
     def fetch_stock_data(self):
         """从AKShare获取A股历史数据"""
         try:
             # 获取股票名称
-            stock_info = ak.stock_individual_info_em(symbol=self.stock_code)
-            self.stock_name = stock_info.loc[stock_info['item'] == '股票简称', 'value'].iloc[0]
+            self.stock_name = self.akshare.get_stock_name(self.stock_code)
             
-            # 计算日期范围
-            end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=365*int(self.period[:-1]))).strftime('%Y%m%d')
+            # 计算年数
+            years = int(self.period[:-1]) if self.period[:-1].isdigit() else 1
             
             # 获取历史数据
-            self.data = ak.stock_zh_a_hist(
-                symbol=self.stock_code, 
+            self.data = self.akshare.get_stock_history(
+                stock_code=self.stock_code, 
                 period="daily", 
-                start_date=start_date, 
-                end_date=end_date,
+                years=years, 
                 adjust="qfq"  # 前复权
             )
-            
-            # 处理数据格式
-            self.data['日期'] = pd.to_datetime(self.data['日期'])
-            self.data.set_index('日期', inplace=True)
-            self.data.rename(columns={
-                '开盘': 'Open',
-                '收盘': 'Close',
-                '最高': 'High',
-                '最低': 'Low',
-                '成交量': 'Volume'
-            }, inplace=True)
             
             print(f"成功获取 {self.stock_name}({self.stock_code}) 的历史数据")
             return True
@@ -77,7 +61,10 @@ class AStockAnalyzer:
     def fetch_financial_reports(self):
         """获取财务报表数据"""
         try:
-            self.financial_reports = ak.stock_financial_analysis_indicator(symbol=f"{self.stock_code}", start_year="2023")
+            self.financial_reports = self.akshare.get_financial_reports(
+                stock_code=self.stock_code, 
+                start_year="2023"
+            )
               
             print(f"成功获取 {self.stock_code} 的财务报表数据")
             return True
@@ -103,9 +90,10 @@ class AStockAnalyzer:
                 "include_domains": ["eastmoney.com", "sina.com.cn", "10jqka.com.cn"]
             }
             
-            # 依次尝试不同的认证方式
+            # 获取数据
             response = self.tavily_api.search_base_news(payload)
             if response:
+                # 处理Tavily返回的新闻数据，主要提取标题、内容、来源、发布时间、情感得分
                 self.news_data = self.tavily_api.process_tavily_response(response)
                 return True   
             else:
@@ -118,36 +106,9 @@ class AStockAnalyzer:
         """计算各种技术指标"""
         if self.data is None or self.data.empty:
             raise ValueError("没有可用的股票数据，请先获取数据")
-            
-        df = self.data.copy()
         
-        # 移动平均线
-        self.indicators['SMA_5'] = df.ta.sma(length=5, close='Close')
-        self.indicators['SMA_10'] = df.ta.sma(length=10, close='Close') 
-        self.indicators['SMA_20'] = df.ta.sma(length=20, close='Close')
-        self.indicators['SMA_60'] = df.ta.sma(length=60, close='Close')
-        
-        # 相对强弱指数(RSI)
-        self.indicators['RSI_6'] = df.ta.rsi(length=6, close='Close')
-        self.indicators['RSI_12'] = df.ta.rsi(length=12, close='Close')
-        
-        # MACD
-        macd = df.ta.macd(fast=12, slow=26, signal=9, close='Close')
-        self.indicators['MACD'] = macd['MACD_12_26_9']
-        self.indicators['MACD_signal'] = macd['MACDs_12_26_9']
-        self.indicators['MACD_hist'] = macd['MACDh_12_26_9']
-        
-        # KDJ指标
-        stoch = df.ta.stoch(high='High', low='Low', close='Close', k=9, d=3, smooth_k=3)
-        self.indicators['KDJ_K'] = stoch['STOCHk_9_3_3']
-        self.indicators['KDJ_D'] = stoch['STOCHd_9_3_3']
-        self.indicators['KDJ_J'] = 3 * stoch['STOCHk_9_3_3'] - 2 * stoch['STOCHd_9_3_3']
-        
-        # 布林带
-        bbands = df.ta.bbands(length=20, close='Close')
-        self.indicators['BB_upper'] = bbands['BBU_20_2.0']
-        self.indicators['BB_middle'] = bbands['BBM_20_2.0']
-        self.indicators['BB_lower'] = bbands['BBL_20_2.0']
+        # 使用AkshareAPI计算技术指标    
+        self.indicators = self.akshare.calculate_technical_indicators(self.data)
         
         print("技术指标计算完成")
     
@@ -155,46 +116,14 @@ class AStockAnalyzer:
         """生成技术分析摘要"""
         if not self.indicators:
             raise ValueError("没有可用的技术指标，请先计算指标")
-            
-        last_close = self.data['Close'].iloc[-1]
         
-        # 确保使用相同的索引
-        last_index = self.data.index[-1]
+        # 将股票代码和名称添加到数据中，以便AkshareAPI使用
+        data_with_info = self.data.copy()
+        data_with_info['stock_code'] = self.stock_code
+        data_with_info['stock_name'] = self.stock_name
         
-        # 安全地获取指标值
-        sma_5 = self.indicators['SMA_5'].loc[last_index] if last_index in self.indicators['SMA_5'].index else np.nan
-        sma_10 = self.indicators['SMA_10'].loc[last_index] if last_index in self.indicators['SMA_10'].index else np.nan
-        sma_20 = self.indicators['SMA_20'].loc[last_index] if last_index in self.indicators['SMA_20'].index else np.nan
-        sma_60 = self.indicators['SMA_60'].loc[last_index] if last_index in self.indicators['SMA_60'].index else np.nan
-        rsi_6 = self.indicators['RSI_6'].loc[last_index] if last_index in self.indicators['RSI_6'].index else np.nan
-        rsi_12 = self.indicators['RSI_12'].loc[last_index] if last_index in self.indicators['RSI_12'].index else np.nan
-        macd = self.indicators['MACD'].loc[last_index] if last_index in self.indicators['MACD'].index else np.nan
-        macd_signal = self.indicators['MACD_signal'].loc[last_index] if last_index in self.indicators['MACD_signal'].index else np.nan
-        kdj_k = self.indicators['KDJ_K'].loc[last_index] if last_index in self.indicators['KDJ_K'].index else np.nan
-        kdj_d = self.indicators['KDJ_D'].loc[last_index] if last_index in self.indicators['KDJ_D'].index else np.nan
-        kdj_j = self.indicators['KDJ_J'].loc[last_index] if last_index in self.indicators['KDJ_J'].index else np.nan
-        
-        summary = {
-            '股票代码': self.stock_code,
-            '股票名称': self.stock_name,
-            '最新收盘价': round(last_close, 2),
-            '5日均线': round(sma_5, 2) if not np.isnan(sma_5) else None,
-            '10日均线': round(sma_10, 2) if not np.isnan(sma_10) else None,
-            '20日均线': round(sma_20, 2) if not np.isnan(sma_20) else None,
-            '60日均线': round(sma_60, 2) if not np.isnan(sma_60) else None,
-            '6日RSI': round(rsi_6, 2) if not np.isnan(rsi_6) else None,
-            '12日RSI': round(rsi_12, 2) if not np.isnan(rsi_12) else None,
-            'MACD': round(macd, 4) if not np.isnan(macd) else None,
-            'MACD信号线': round(macd_signal, 4) if not np.isnan(macd_signal) else None,
-            'KDJ_K': round(kdj_k, 2) if not np.isnan(kdj_k) else None,
-            'KDJ_D': round(kdj_d, 2) if not np.isnan(kdj_d) else None,
-            'KDJ_J': round(kdj_j, 2) if not np.isnan(kdj_j) else None,
-            '短期趋势': "上涨" if last_close > sma_5 > sma_10 else "下跌",
-            '中期趋势': "上涨" if sma_10 > sma_20 > sma_60 else "下跌",
-            'RSI状态': "超买" if rsi_6 > 80 or rsi_12 > 70 else "超卖" if rsi_6 < 20 or rsi_12 < 30 else "中性",
-            'MACD信号': "金叉" if macd > macd_signal else "死叉",
-            'KDJ信号': "超买" if kdj_j > 100 else "超卖" if kdj_j < 0 else "中性"
-        }
+        # 使用AkshareAPI生成技术分析摘要
+        summary = self.akshare.generate_technical_summary(data_with_info, self.indicators)
         
         return summary
     
@@ -203,88 +132,12 @@ class AStockAnalyzer:
         if self.financial_reports is None or self.financial_reports.empty:
             return None
 
-        print(f"成功获取到 {len(self.financial_reports)} 条财务指标记录。")
-       
-        # --- 3. 数据处理与选择关键指标 ---
-        # 数据通常按报告日期降序排列，第一行是最新的
-        latest_data = self.financial_reports.iloc[0] # 获取最新一期的数据
-
-        print(f"\n最新报告期: {latest_data.name}") # Series的name通常是日期索引
-
-        # 提取关键指标 (根据实际列名选择，列名可能随akshare版本或数据源变化)
-        # 注意：列名需要根据实际返回的 DataFrame 进行确认！这里用常见的指标举例
-        # 你可以通过 print(financial_indicator_df.columns) 查看所有列名
-
-        # 假设列名如下（你需要根据实际情况调整）
-        key_metrics = {}
-        possible_metrics = {
-            'roe': '净资产收益率(%)', # 盈利能力
-            'net_profit_margin': '销售净利率(%)', # 盈利能力
-            'gross_profit_margin': '销售毛利率(%)', # 盈利能力
-            'debt_to_asset_ratio': '资产负债率(%)', # 偿债能力
-            'current_ratio': '流动比率', # 短期偿债能力
-            'quick_ratio': '速动比率', # 短期偿债能力
-            'total_asset_turnover': '总资产周转率(次)', # 营运能力
-            'eps': '基本每股收益(元)', # 每股指标
-            'net_profit_growth_rate': '净利润同比增长率(%)' # 成长能力
-        }
-
-        print("\n尝试提取关键指标...")
-        for key, col_name in possible_metrics.items():
-            if col_name in latest_data.index:
-                key_metrics[key] = latest_data[col_name]
-                print(f"  - 提取到 {col_name}: {key_metrics[key]}")
-            else:
-                key_metrics[key] = 'N/A' # 如果找不到该列，标记为 N/A
-                print(f"  - 未找到指标: {col_name}")
-
-        # --- 4. 生成财务分析摘要 ---
-        print("\n--- 财务分析摘要 ---")
-        summary = f"公司代码: {self.stock_code}\n"
-        summary += f"公司名称: {self.stock_name}\n"
-        summary += f"最新报告期: {latest_data.name}\n\n"
-        summary += "**盈利能力:**\n"
-        summary += f"- 净资产收益率 (ROE): {key_metrics.get('roe', 'N/A')}% (衡量股东权益回报水平)\n"
-        summary += f"- 销售净利率: {key_metrics.get('net_profit_margin', 'N/A')}% (衡量销售收入的盈利能力)\n"
-        summary += f"- 销售毛利率: {key_metrics.get('gross_profit_margin', 'N/A')}% (衡量主营业务的初始盈利空间)\n\n"
-
-        summary += "**偿债能力:**\n"
-        summary += f"- 资产负债率: {key_metrics.get('debt_to_asset_ratio', 'N/A')}% (衡量总资产中通过负债筹集的比例，过高可能风险较大)\n"
-        summary += f"- 流动比率: {key_metrics.get('current_ratio', 'N/A')} (衡量短期偿债能力，通常认为 > 2 较好)\n"
-        summary += f"- 速动比率: {key_metrics.get('quick_ratio', 'N/A')} (更严格的短期偿债能力指标，通常认为 > 1 较好)\n\n"
-
-        summary += "**营运能力:**\n"
-        summary += f"- 总资产周转率: {key_metrics.get('total_asset_turnover', 'N/A')} 次 (衡量资产运营效率，越高越好)\n\n"
-
-        summary += "**每股指标与成长性:**\n"
-        summary += f"- 基本每股收益 (EPS): {key_metrics.get('eps', 'N/A')} 元 (衡量普通股股东每股盈利)\n"
-        summary += f"- 净利润同比增长率: {key_metrics.get('net_profit_growth_rate', 'N/A')}% (衡量公司盈利的增长速度)\n\n"
-
-        summary += "**初步结论:**\n"
-        # 这里可以加入一些基于数据的判断逻辑，例如：
-        roe_value = pd.to_numeric(key_metrics.get('roe'), errors='coerce')
-        debt_ratio_value = pd.to_numeric(key_metrics.get('debt_to_asset_ratio'), errors='coerce')
-
-        if roe_value is not None and roe_value > 15:  # 假设 ROE > 15% 算优秀
-            summary += "- 公司盈利能力较强 (ROE 较高)。\n"
-        elif roe_value is not None:
-            summary += "- 公司盈利能力一般或有待观察。\n"
-
-        if debt_ratio_value is not None and debt_ratio_value < 50:  # 假设资产负债率 < 50% 算稳健
-            summary += "- 财务结构相对稳健 (资产负债率较低)。\n"
-        elif debt_ratio_value is not None:
-            summary += "- 需要关注公司的债务水平 (资产负债率较高)。\n"
-
-        if key_metrics.get('net_profit_growth_rate') != 'N/A':
-            growth_rate = pd.to_numeric(key_metrics.get('net_profit_growth_rate'), errors='coerce')
-            if growth_rate is not None and growth_rate > 10:  # 假设增长率 > 10% 算良好
-                summary += "- 公司具有一定的成长性。\n"
-            elif growth_rate is not None:
-                summary += "- 公司成长性需要进一步分析。\n"
-
-        summary += "\n*注意: 此摘要仅基于部分关键财务指标的最新数据，未进行深入的趋势分析、行业对比和定性分析，不构成任何投资建议。*"
-        print(summary)
-        return summary
+        # 使用AkshareAPI生成财务分析摘要
+        return self.akshare.generate_financial_summary(
+            stock_code=self.stock_code,
+            stock_name=self.stock_name,
+            financial_reports=self.financial_reports
+        )
     
     def generate_news_summary(self):
         """生成新闻舆情摘要"""
@@ -399,17 +252,14 @@ class AStockAnalyzer:
             plt.show()
     
     def analyze_with_gemini(self, additional_context=None):
-        """使用Google Gemini-2.5 Pro进行综合分析"""
+        """使用Google Gemini-1.5 Pro进行综合分析"""
         try:
-            if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
-                print("未配置有效的Gemini API密钥")
-                return "无法生成分析报告：API密钥无效"
-                
+            
             technical_summary = self.generate_technical_summary()
             financial_summary = self.generate_financial_summary()
             news_summary = self.generate_news_summary()
             
-            print("正在使用Google Gemini生成AI分析报告...")
+            print("正在使用 AI 生成分析报告...")
             
             # 准备提示词 - 精简以适应免费API的token限制
             prompt = f"""
@@ -423,12 +273,14 @@ class AStockAnalyzer:
             {additional_context or ''}
             
             请分析：1.技术面评估 2.基本面简评 3.舆情分析 4.投资建议 5.风险提示
-            尽量简洁，总字数控制在1000字以内。
+            尽量简洁，总字数控制在1500字以内。
             """
             
             try:
-                # self.analysis_report = self.llm.generate_gemini_response(prompt)
-                self.analysis_report = self.llm.generate_deepseek_response(prompt)
+                if self.ai_type == "gemini":
+                    self.analysis_report = self.llm.generate_gemini_response(prompt)
+                elif self.ai_type == "deepseek":
+                    self.analysis_report = self.llm.generate_deepseek_response(prompt)
                 return self.analysis_report
                 
             except Exception as e:
@@ -536,12 +388,16 @@ class AStockAnalyzer:
         
         # 计算技术指标
         self.calculate_technical_indicators()   
+
+        # 创建数据目录
+        data_dir = f"datas/{self.stock_code}"
+        os.makedirs(data_dir, exist_ok=True)
         
         # 绘制分析图表
-        self.plot_analysis_charts(save_path=f"datas/technical_{self.stock_code}.png")
+        self.plot_analysis_charts(save_path=f"{data_dir}/technical.png")
         
         # 生成新闻词云
-        self.generate_word_cloud(save_path=f"datas/wordcloud_{self.stock_code}.png")
+        self.generate_word_cloud(save_path=f"{data_dir}/wordcloud.png")
         
         # 使用Gemini进行分析
         analysis = self.analyze_with_gemini(
@@ -553,13 +409,6 @@ class AStockAnalyzer:
             print(analysis)
             
         # 保存完整报告
-        self.save_full_report(f"datas/analysis_{self.stock_code}.txt") 
+        self.save_full_report(f"{data_dir}/analysis.txt") 
 
         print("分析流程完成，结果已保存")
-        
-
-if __name__ == "__main__":
-    analyzer = AStockAnalyzer("000001", "1y")
-    analyzer.run_analysis(context="金融行业龙头，具有较强品牌溢价能力")
-
-

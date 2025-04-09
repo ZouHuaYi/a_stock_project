@@ -1,7 +1,6 @@
 from src.config.config import DEEPSEEK_API_KEY, GEMINI_API_KEY
 import google.generativeai as genai
 from openai import OpenAI
-
 class LLMAPI:
     def __init__(self):
         self.GEMINI_API_KEY = GEMINI_API_KEY
@@ -14,6 +13,7 @@ class LLMAPI:
             "top_k": 64,
             "max_output_tokens": 1024 * 2,  # 减少token使用量
         }
+        genai.configure(api_key=self.GEMINI_API_KEY)
         model = genai.GenerativeModel(
             model_name="gemini-1.5-pro",
             generation_config=generation_config,
