@@ -254,7 +254,6 @@ class AStockAnalyzer:
     def analyze_with_gemini(self, additional_context=None):
         """使用Google Gemini-1.5 Pro进行综合分析"""
         try:
-            
             technical_summary = self.generate_technical_summary()
             financial_summary = self.generate_financial_summary()
             news_summary = self.generate_news_summary()
@@ -344,7 +343,7 @@ class AStockAnalyzer:
 
     # 保留DeepSeek方法但简化实现，方便兼容
     def analyze_with_deepseek(self, additional_context=None):
-        """兼容性方法，内部调用Gemini"""
+        """兼容性方法"""
         return self.analyze_with_gemini(additional_context)
     
     def _format_financial_summary(self, summary):
