@@ -3,6 +3,7 @@ from src.utils.stork_api import StockAPI
 from src.utils.db_manager import DatabaseManager
 import pandas as pd
 from src.utils.task_runner import TaskRunner
+from sqlalchemy import text
 
 def init_stock_basic():
     """更新股票的 industry market_cap"""
@@ -20,11 +21,13 @@ def init_stock_basic():
     for index, row in stock_list.iterrows():
         stock_info = stock_api.get_stock_info(row['stock_code'])
         if stock_info is not None:
-            # 使用 db_manager 更新
-            sql = f"""
-                UPDATE stock_basic SET market_cap = '{stock_info['market_cap']}', industry = '{stock_info['industry']}' WHERE id = {row['id']}
-            """ 
-            db_manager.execute_sql(sql)
+            # 创建一个包含更新数据的DataFrame
+            sql= f"UPDATE stock_basic SET stock_code = '{row['stock_code']}', stock_name = '{row['stock_name']}', market_cap = '{stock_info['market_cap']}', list_date = '{stock_info['list_date']}', industry = '{stock_info['industry']}' WHERE id = {row['id']}"
+
+            with db_manager.engine.connect() as conn:
+                conn.begin()
+                conn.execute(text(sql))
+                conn.commit()
             print(f"更新股票 {row['stock_code']} 的 market_cap 和 industry")
 
     db_manager.close()
@@ -139,5 +142,5 @@ def init_select_data_day(trade_date):
 if __name__ == "__main__":
     # init_stock_basic()
     # init_stock_daily()
-    # init_select_data_day('20190408')
-    init_stock_basic()
+    init_select_data_day('20250410')
+    # init_stock_basic()
