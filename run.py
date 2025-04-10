@@ -1,0 +1,42 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+A股选股与分析工具 - 主入口文件
+
+使用方法:
+    - 选股功能: python run.py select [volume|technical|combined] [--options]
+    - 分析功能: python run.py analyze [volprice|golden|deepseek] 股票代码 [--options]
+    - 更新数据: python run.py update [--full]
+    
+详细选项请使用 python run.py -h 查看帮助
+"""
+
+import sys
+import os
+from datetime import datetime
+
+# 确保路径正确
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# 导入配置
+from config import BASE_CONFIG, PATH_CONFIG
+from utils.logger import setup_logger
+from cli.command_line import main
+
+def ensure_directories():
+    """确保所有必要的目录都存在"""
+    # 获取日志记录器
+    logger = setup_logger()
+    
+    # 确保各个目录存在
+    for key, dir_path in PATH_CONFIG.items():
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path)
+            logger.info(f"创建目录: {dir_path}")
+
+if __name__ == "__main__":
+    # 确保目录存在
+    ensure_directories()
+    
+    # 执行主函数
+    main()
