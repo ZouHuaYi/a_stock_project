@@ -68,10 +68,10 @@ def handle_select(args):
             from selector.volume_selector import VolumeSelector
             selector = VolumeSelector(days=args.days, threshold=args.threshold, limit=args.limit)
         elif selector_type == 'technical':
-            from selector.technical_selector import TechnicalSelector
+            from selector.technical_selector import TechnicalSelector # type: ignore
             selector = TechnicalSelector(days=args.days, threshold=args.threshold, limit=args.limit)
         elif selector_type == 'combined':
-            from selector.combined_selector import CombinedSelector
+            from selector.combined_selector import CombinedSelector # type: ignore
             selector = CombinedSelector(days=args.days, threshold=args.threshold, limit=args.limit)
         else:
             logger.error(f"未知的选股器类型: {selector_type}")

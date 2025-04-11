@@ -69,7 +69,22 @@ class DatabaseManager:
         try:
             with self.engine.connect() as connection:
                 if params:
-                    connection.execute(text(sql), params)
+                    # 将params转换为字典格式
+                    if isinstance(params, tuple):
+                        # 提取SQL中的参数占位符名称
+                        param_names = []
+                        current_sql = sql
+                        for i in range(len(params)):
+                            param_name = f"p{i}"
+                            param_names.append(param_name)
+                            # 将SQL中的%s替换为:param_name
+                            current_sql = current_sql.replace("%s", f":{param_name}", 1)
+                        
+                        # 创建参数字典
+                        param_dict = {name: value for name, value in zip(param_names, params)}
+                        connection.execute(text(current_sql), param_dict)
+                    else:
+                        connection.execute(text(sql), params)
                 else:
                     connection.execute(text(sql))
                 connection.commit()
@@ -92,14 +107,30 @@ class DatabaseManager:
         try:
             with self.engine.connect() as connection:
                 if params:
-                    result = connection.execute(text(sql), params).fetchone()
+                    # 处理SQL中的参数
+                    param_names = []
+                    current_sql = sql
+                    for i in range(len(params)):
+                        param_name = f"p{i}"
+                        param_names.append(param_name)
+                        # 将SQL中的%s替换为:param_name
+                        current_sql = current_sql.replace("%s", f":{param_name}", 1)
+                    
+                    # 创建参数字典
+                    param_dict = {name: value for name, value in zip(param_names, params)}
+                    result = connection.execute(text(current_sql), param_dict).fetchone()
                 else:
                     result = connection.execute(text(sql)).fetchone()
                 
                 if result:
                     # 转换为字典
-                    keys = result.keys()
-                    return {key: result[key] for key in keys}
+                    try:
+                        keys = result.keys()
+                        return {key: result[key] for key in keys}
+                    except Exception as ke:
+                        logger.error(f"获取结果键失败: {ke}")
+                        # 尝试替代方法
+                        return dict(result._mapping)
                 return None
         except Exception as e:
             logger.error(f"查询单条记录失败: {e}")
@@ -119,14 +150,30 @@ class DatabaseManager:
         try:
             with self.engine.connect() as connection:
                 if params:
-                    results = connection.execute(text(sql), params).fetchall()
+                    # 处理SQL中的参数
+                    param_names = []
+                    current_sql = sql
+                    for i in range(len(params)):
+                        param_name = f"p{i}"
+                        param_names.append(param_name)
+                        # 将SQL中的%s替换为:param_name
+                        current_sql = current_sql.replace("%s", f":{param_name}", 1)
+                    
+                    # 创建参数字典
+                    param_dict = {name: value for name, value in zip(param_names, params)}
+                    results = connection.execute(text(current_sql), param_dict).fetchall()
                 else:
                     results = connection.execute(text(sql)).fetchall()
                 
                 # 转换为字典列表
                 if results:
-                    keys = results[0].keys()
-                    return [{key: row[key] for key in keys} for row in results]
+                    try:
+                        keys = results[0].keys()
+                        return [{key: row[key] for key in keys} for row in results]
+                    except Exception as ke:
+                        logger.error(f"获取结果键失败: {ke}")
+                        # 尝试替代方法
+                        return [dict(row._mapping) for row in results]
                 return []
         except Exception as e:
             logger.error(f"查询多条记录失败: {e}")

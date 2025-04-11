@@ -5,6 +5,7 @@ import akshare as ak
 import pandas as pd
 import numpy as np
 import time
+import os
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 
@@ -48,29 +49,56 @@ class StockDataUpdater:
             pd.DataFrame: 股票列表数据框
         """
         logger.info("获取A股股票列表")
+        
+        # 从数据库获取数据
         try:
-            # 使用akshare获取股票列表
-            stock_list = ak.stock_zh_a_spot_em()
-            
-            # 整理数据
-            result = stock_list[['代码', '名称', '总市值']].copy()
-            result.columns = ['stock_code', 'stock_name', 'market_cap']
-            
-            # 添加交易所和行业信息
-            result['exchange'] = result['stock_code'].apply(
-                lambda x: 'SH' if x.startswith('6') else 'SZ'
-            )
-            
-            # 设置默认行业
-            result['industry'] = '未知'
-            result['list_date'] = datetime.now().strftime('%Y-%m-%d')
-            
-            logger.info(f"获取到 {len(result)} 只股票")
-            return result
+            # 确保表存在
+            if not self.db_manager.table_exists('stock_basic'):
+                self.db_manager.execute_ddl(TABLE_SCHEMAS['stock_basic'])
+            # 检查数据库中是否已有股票基本信息
+            existing_stocks = self.db_manager.fetch_one("SELECT COUNT(*) as count FROM stock_basic")
+            if existing_stocks and existing_stocks.get('count', 0) > 0:
+                logger.info("从数据库中获取股票基本信息")
+                stocks = self.db_manager.read_sql("SELECT stock_code, stock_name, market_cap, exchange, industry, list_date FROM stock_basic")
+                if not stocks.empty:
+                    return stocks
+                    
+            # 如果数据库中没有数据，从AKShare获取
+            logger.info("从AKShare获取股票列表")
+            try:
+                stock_list = ak.stock_info_a_code_name()
+                # 重命名列（根据实际返回的列名调整）
+                column_mapping = {
+                    'code': 'stock_code',
+                    'name': 'stock_name'
+                }
+                stock_list = stock_list.rename(columns=column_mapping)
+
+                # 只保留 0，60，300开头的股票
+                stock_list = stock_list[stock_list['stock_code'].str.startswith(('0', '60', '300'))]
+
+                stock_list['exchange'] = stock_list['stock_code'].apply(
+                    lambda x: 'SH' if x.startswith('6') else 'SZ'
+                )
+
+                # 设置默认行业
+                stock_list['industry'] = '未知'
+                stock_list['list_date'] = datetime.now().strftime('%Y-%m-%d')
+                
+                # 向数据库中插入数据
+                self.db_manager.to_sql(stock_list.copy(), 'stock_basic', if_exists='append')
+
+                logger.info(f"数据库中股票数量：{len(stock_list)}")
+                return stock_list
+            except Exception as e:
+                logger.error(f"获取股票列表时出错, {str(e)}")
+                
         except Exception as e:
-            logger.error(f"获取股票列表时出错: {str(e)}")
-            return pd.DataFrame()
+            logger.error(f"获取股票列表失败: {str(e)}")
             
+        # 如果所有尝试都失败，返回空DataFrame
+        return pd.DataFrame()
+        
     def _update_stock_basic(self, stocks: pd.DataFrame) -> bool:
         """
         更新股票基本信息
@@ -81,15 +109,30 @@ class StockDataUpdater:
         返回:
             bool: 是否成功更新
         """
-        logger.info("更新股票基本信息")
-        
+        logger.info(f"更新股票 market_cap industry list_date 字段, {len(stocks)} 只股票")
         try:
-            # 如果表不存在，创建表
-            if not self.db_manager.table_exists('stock_basic'):
-                self.db_manager.execute_ddl(TABLE_SCHEMAS['stock_basic'])
-            
-            # 更新股票基本信息
-            return self.db_manager.to_sql(stocks, 'stock_basic', if_exists='replace')
+            error_update_list = []
+            # 更新数据库中 market_cap 字段 和 list_date 字段
+            for index, row in stocks.iterrows():
+                stock_code = row['stock_code']
+                try:
+                    # 获取股票基本信息
+                    stock_info = ak.stock_individual_info_em(symbol=f"{stock_code}", timeout=6000)
+                    industry = stock_info.iloc[6, 1]
+                    market_cap = stock_info.iloc[4, 1]    
+                    list_date = stock_info.iloc[7, 1]
+                    # market_cap 是 decimal 类型，需要转换为 float 类型
+                    market_cap = float(market_cap)
+                    update_sql = f"UPDATE stock_basic SET industry = '{industry}', market_cap = {market_cap}, list_date = '{list_date}' WHERE stock_code = '{stock_code}'"
+                    logger.info(f"{index} 、更新股票 {stock_code} 基本信息")
+                    self.db_manager.execute_and_commit(update_sql) 
+                    
+                except Exception as e:
+                    logger.error(f"更新股票 {stock_code} 时出错")
+                    error_update_list.append(stock_code)
+      
+            print(error_update_list)
+            return True
         except Exception as e:
             logger.error(f"更新股票基本信息时出错: {str(e)}")
             return False
@@ -106,86 +149,224 @@ class StockDataUpdater:
         返回:
             pd.DataFrame: 股票日线数据框
         """
+        # 首先获取已有的数据，用于后续只获取缺失的数据
+        existing_data = pd.DataFrame()
         try:
-            # 使用akshare获取日线数据
-            daily_data = ak.stock_zh_a_hist(
-                symbol=stock_code,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust="qfq"  # 前复权
-            )
+            start_date_fmt = datetime.strptime(start_date, '%Y%m%d').strftime('%Y-%m-%d')
+            end_date_fmt = datetime.strptime(end_date, '%Y%m%d').strftime('%Y-%m-%d')
             
-            # 检查数据
-            if daily_data.empty:
-                logger.warning(f"未获取到股票 {stock_code} 的日线数据")
-                return pd.DataFrame()
+            sql = f"""
+                SELECT * FROM stock_daily 
+                WHERE stock_code = '{stock_code}' 
+                AND trade_date BETWEEN '{start_date_fmt}' AND '{end_date_fmt}'
+            """
+            existing_data = self.db_manager.read_sql(sql)
+            if not existing_data.empty:
+                logger.info(f"从数据库获取到股票 {stock_code} 的 {len(existing_data)} 条日线数据")
+                # 如果已有的数据覆盖了整个日期范围，直接返回
+                if self._is_date_range_covered(existing_data, start_date_fmt, end_date_fmt):
+                    logger.info(f"股票 {stock_code} 在日期范围内的数据已完整，无需更新")
+                    return existing_data
                 
-            # 标准化列名
-            column_map = {
-                '日期': 'trade_date',
-                '开盘': 'open',
-                '收盘': 'close',
-                '最高': 'high',
-                '最低': 'low',
-                '成交量': 'volume',
-                '成交额': 'amount',
-                '振幅': 'amplitude',
-                '涨跌幅': 'change_percent',
-                '涨跌额': 'change_amount',
-                '换手率': 'turnover_rate'
-            }
-            daily_data.rename(columns=column_map, inplace=True)
-            
-            # 添加股票代码
-            daily_data['stock_code'] = stock_code
-            
-            # 转换日期格式
-            daily_data['trade_date'] = pd.to_datetime(daily_data['trade_date'])
-            
-            # 确保数据类型正确
-            for col in ['open', 'close', 'high', 'low', 'volume', 'amount']:
-                if col in daily_data.columns:
-                    daily_data[col] = daily_data[col].astype(float)
+                logger.info(f"股票 {stock_code} 日期范围内的数据不完整，将获取缺失数据")
+        except Exception as db_e:
+            logger.warning(f"从数据库获取股票 {stock_code} 日线数据时出错: {str(db_e)}")
+        
+        # 从API获取数据
+        max_retries = 3
+        retry_delay = 2
+        for retry in range(max_retries):
+            try:
+                # 使用akshare获取日线数据
+                logger.info(f"从AKShare获取股票 {stock_code} 日线数据")
+                
+                # 如果已有数据，则只获取缺失的日期范围
+                if not existing_data.empty:
+                    missing_ranges = self._get_missing_date_ranges(existing_data, start_date_fmt, end_date_fmt)
+                    if not missing_ranges:
+                        logger.info(f"股票 {stock_code} 没有缺失的日期范围，无需从API获取数据")
+                        return existing_data
                     
-            return daily_data
-        except Exception as e:
-            logger.error(f"获取股票 {stock_code} 日线数据时出错: {str(e)}")
-            return pd.DataFrame()
-            
-    def _calculate_indicators(self, daily_data: pd.DataFrame) -> pd.DataFrame:
+                    # 合并多个时间段的数据
+                    all_new_data = pd.DataFrame()
+                    for missing_start, missing_end in missing_ranges:
+                        missing_start_str = missing_start.strftime('%Y%m%d')
+                        missing_end_str = missing_end.strftime('%Y%m%d')
+                        logger.info(f"获取股票 {stock_code} 缺失日期 {missing_start_str} 至 {missing_end_str} 的数据")
+                        
+                        new_data = ak.stock_zh_a_hist(
+                            symbol=stock_code,
+                            period="daily",
+                            start_date=missing_start_str,
+                            end_date=missing_end_str,
+                            adjust="qfq"  # 前复权
+                        )
+                        
+                        if not new_data.empty:
+                            all_new_data = pd.concat([all_new_data, new_data])
+                else:
+                    # 如果没有已有数据，则获取整个日期范围
+                    pure_code = stock_code.split('.')[0]
+                    all_new_data = ak.stock_zh_a_hist(
+                        symbol=pure_code,
+                        period="daily",
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust="qfq"  # 前复权
+                    )
+                
+                # 检查数据
+                if all_new_data.empty:
+                    logger.warning(f"未获取到股票 {stock_code} 的日线数据")
+                    break
+                    
+                # 标准化列名
+                column_map = {
+                    '日期': 'trade_date',
+                    '开盘': 'open',
+                    '收盘': 'close',
+                    '最高': 'high',
+                    '最低': 'low',
+                    '成交量': 'volume',
+                    '成交额': 'amount',
+                    '振幅': 'amplitude',
+                    '涨跌幅': 'change_percent',
+                    '涨跌额': 'change_amount',
+                    '换手率': 'turnover_rate'
+                }
+                # 这个方法有问题，我只想保留 column_map 中的列名
+                all_new_data = all_new_data[column_map.keys()]
+                all_new_data.rename(columns=column_map, inplace=True)
+                
+                # 添加股票代码
+                all_new_data['stock_code'] = stock_code
+                
+                # 转换日期格式
+                all_new_data['trade_date'] = pd.to_datetime(all_new_data['trade_date'])
+                
+                # 确保数据类型正确
+                for col in ['open', 'close', 'high', 'low', 'volume', 'amount']:
+                    if col in all_new_data.columns:
+                        all_new_data[col] = all_new_data[col].astype(float)
+                print(all_new_data)
+                # 合并已有数据和新数据
+                if not existing_data.empty:
+                    # 确保一致的日期格式
+                    if 'trade_date' in existing_data.columns:
+                        existing_data['trade_date'] = pd.to_datetime(existing_data['trade_date'])
+                    
+                    # 删除重复的日期（以新数据为准）
+                    merged_data = pd.concat([existing_data, all_new_data])
+                    merged_data = merged_data.drop_duplicates(subset=['stock_code', 'trade_date'], keep='last')
+                    return merged_data
+                else:
+                    return all_new_data
+                
+            except Exception as e:
+                logger.error(f"获取股票 {stock_code} 日线数据时出错: {str(e)}")
+                if retry < max_retries - 1:
+                    logger.info(f"等待 {retry_delay} 秒后重试 ({retry+1}/{max_retries})...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 指数退避
+        
+        # 所有方法都失败，返回已有数据或空DataFrame
+        return existing_data if not existing_data.empty else pd.DataFrame()
+    
+    def _is_date_range_covered(self, df: pd.DataFrame, start_date: str, end_date: str) -> bool:
         """
-        计算技术指标
+        检查数据框是否完整覆盖了指定的日期范围
         
         参数:
-            daily_data (pd.DataFrame): 日线数据
+            df (pd.DataFrame): 数据框
+            start_date (str): 开始日期，格式：YYYY-MM-DD
+            end_date (str): 结束日期，格式：YYYY-MM-DD
             
         返回:
-            pd.DataFrame: 技术指标数据框
+            bool: 是否完整覆盖
         """
-        if daily_data.empty:
-            return pd.DataFrame()
+        if df.empty:
+            return False
+        
+        # 确保日期列是datetime类型
+        if 'trade_date' in df.columns:
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+        
+        # 转换日期字符串为datetime
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+        
+        # 获取交易日历（周一至周五）
+        all_days = pd.date_range(start=start_dt, end=end_dt, freq='D')
+        trading_days = [day for day in all_days if day.weekday() < 5]  # 排除周末
+        
+        # 检查每个交易日是否都有数据
+        # 注意：这里可能需要考虑节假日，但简化处理
+        existing_dates = set(df['trade_date'].dt.date)
+        missing_dates = [day for day in trading_days if day.date() not in existing_dates]
+        
+        # 如果缺失日期数量少于总日期的5%，认为基本完整（容忍节假日）
+        tolerance_ratio = 0.05
+        if len(missing_dates) <= len(trading_days) * tolerance_ratio:
+            return True
+        
+        return False
+    
+    def _get_missing_date_ranges(self, df: pd.DataFrame, start_date: str, end_date: str) -> List[Tuple[datetime, datetime]]:
+        """
+        获取数据框缺失的日期范围
+        
+        参数:
+            df (pd.DataFrame): 数据框
+            start_date (str): 开始日期，格式：YYYY-MM-DD
+            end_date (str): 结束日期，格式：YYYY-MM-DD
             
-        # 获取必要的列
-        df = daily_data[['stock_code', 'trade_date', 'close', 'volume']].copy()
+        返回:
+            List[Tuple[datetime, datetime]]: 缺失的日期范围列表，每个元素为(开始日期,结束日期)
+        """
+        if df.empty:
+            # 如果数据为空，返回整个日期范围
+            return [(pd.to_datetime(start_date), pd.to_datetime(end_date))]
         
-        # 排序数据
-        df.sort_values('trade_date', inplace=True)
+        # 确保日期列是datetime类型
+        if 'trade_date' in df.columns:
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
         
-        # 计算均线
-        df['ma5'] = df['close'].rolling(window=5).mean()
-        df['ma10'] = df['close'].rolling(window=10).mean()
-        df['ma20'] = df['close'].rolling(window=20).mean()
+        # 转换日期字符串为datetime
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
         
-        # 计算成交量均线
-        df['vol_ma5'] = df['volume'].rolling(window=5).mean()
-        df['vol_ma10'] = df['volume'].rolling(window=10).mean()
+        # 获取交易日历（周一至周五）
+        all_days = pd.date_range(start=start_dt, end=end_dt, freq='D')
+        trading_days = [day for day in all_days if day.weekday() < 5]  # 排除周末
         
-        # 选择需要的列
-        result = df[['stock_code', 'trade_date', 'ma5', 'ma10', 'ma20', 'vol_ma5', 'vol_ma10']]
+        # 获取已有的日期
+        existing_dates = set(df['trade_date'].dt.date)
         
-        return result
+        # 找出缺失的日期
+        missing_dates = [day for day in trading_days if day.date() not in existing_dates]
         
+        # 如果没有缺失日期，返回空列表
+        if not missing_dates:
+            return []
+        
+        # 将缺失日期组合成连续的日期范围
+        missing_ranges = []
+        range_start = missing_dates[0]
+        prev_date = missing_dates[0]
+        
+        for i in range(1, len(missing_dates)):
+            curr_date = missing_dates[i]
+            # 如果当前日期与前一个日期不连续，结束当前范围并开始新范围
+            if (curr_date - prev_date).days > 3:  # 允许2-3天的间隔（可能是周末）
+                missing_ranges.append((range_start, prev_date))
+                range_start = curr_date
+            prev_date = curr_date
+        
+        # 添加最后一个范围
+        missing_ranges.append((range_start, prev_date))
+        
+        return missing_ranges
+    
     def _update_stock_daily(self, stock_codes: List[str], start_date: str, end_date: str) -> int:
         """
         更新股票日线数据
@@ -201,10 +382,7 @@ class StockDataUpdater:
         # 确保表存在
         if not self.db_manager.table_exists('stock_daily'):
             self.db_manager.execute_ddl(TABLE_SCHEMAS['stock_daily'])
-            
-        if not self.db_manager.table_exists('stock_daily_indicator'):
-            self.db_manager.execute_ddl(TABLE_SCHEMAS['stock_daily_indicator'])
-            
+        
         updated_count = 0
         
         # 分批处理
@@ -218,13 +396,21 @@ class StockDataUpdater:
                     daily_data = self._fetch_stock_daily(stock_code, start_date, end_date)
                     
                     if not daily_data.empty:
-                        # 更新日线数据
-                        self.db_manager.to_sql(daily_data, 'stock_daily', if_exists='replace')
+                        # 更新日线数据，使用append而不是replace
+                        self.db_manager.to_sql(daily_data, 'stock_daily', if_exists='append', index=False)
                         
-                        # 计算并更新技术指标
-                        indicators = self._calculate_indicators(daily_data)
-                        if not indicators.empty:
-                            self.db_manager.to_sql(indicators, 'stock_daily_indicator', if_exists='replace')
+                        # 删除重复数据
+                        sql = """
+                            DELETE t1 FROM stock_daily t1
+                            INNER JOIN (
+                                SELECT stock_code, trade_date, MAX(id) as max_id
+                                FROM stock_daily
+                                GROUP BY stock_code, trade_date
+                                HAVING COUNT(*) > 1
+                            ) t2 ON t1.stock_code = t2.stock_code AND t1.trade_date = t2.trade_date
+                            WHERE t1.id < t2.max_id
+                        """
+                        self.db_manager.execute_and_commit(sql)
                         
                         updated_count += len(daily_data)
                         logger.debug(f"更新股票 {stock_code} 数据成功，{len(daily_data)} 条记录")
@@ -254,21 +440,25 @@ class StockDataUpdater:
         返回:
             bool: 是否成功记录
         """
-        sql = """
-            INSERT INTO data_sync_log 
-            (sync_type, start_time, end_time, status, records_count, error_message)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        params = (
-            sync_type,
-            start_time.strftime('%Y-%m-%d %H:%M:%S'),
-            end_time.strftime('%Y-%m-%d %H:%M:%S'),
-            status,
-            records_count,
-            error_message
-        )
-        
-        return self.db_manager.execute_and_commit(sql, params)
+        try:
+            sql = """
+                INSERT INTO data_sync_log 
+                (sync_type, start_time, end_time, status, records_count, error_message)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            params = (
+                sync_type,
+                start_time.strftime('%Y-%m-%d %H:%M:%S'),
+                end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                status,
+                records_count,
+                error_message
+            )
+            
+            return self.db_manager.execute_and_commit(sql, params)
+        except Exception as e:
+            logger.error(f"记录同步日志失败: {str(e)}")
+            return False
         
     def _get_last_sync_date(self, sync_type: str) -> Optional[datetime]:
         """
@@ -306,7 +496,18 @@ class StockDataUpdater:
             # 确保表存在
             if not self._ensure_tables_exist():
                 raise Exception("创建必要的表失败")
+            
+            # 获取股票列表
+            stock_list = self._fetch_stock_list()
+            if stock_list.empty:
+                raise Exception("获取股票列表失败")
                 
+            # # 更新股票基本信息
+            if not self._update_stock_basic(stock_list):
+                logger.warning("更新股票基本信息失败")
+            return
+
+
             # 获取上次同步时间
             last_sync = self._get_last_sync_date('DAILY_DATA')
             
@@ -357,13 +558,16 @@ class StockDataUpdater:
             updated_count = self._update_stock_daily(stock_codes, start_date_str, end_date_str)
             
             # 记录同步日志
-            self._log_sync(
-                'DAILY_DATA', 
-                start_time, 
-                datetime.now(), 
-                'SUCCESS', 
-                updated_count
-            )
+            try:
+                self._log_sync(
+                    'DAILY_DATA', 
+                    start_time, 
+                    datetime.now(), 
+                    'SUCCESS', 
+                    updated_count
+                )
+            except Exception as log_e:
+                logger.error(f"记录成功日志时出错: {str(log_e)}")
             
             logger.info(f"增量更新完成，共更新 {updated_count} 条记录")
             return True
@@ -373,14 +577,17 @@ class StockDataUpdater:
             logger.error(f"增量更新失败: {error_message}")
             
             # 记录同步失败日志
-            self._log_sync(
-                'DAILY_DATA', 
-                start_time, 
-                datetime.now(), 
-                'FAILED', 
-                0, 
-                error_message
-            )
+            try:
+                self._log_sync(
+                    'DAILY_DATA', 
+                    start_time, 
+                    datetime.now(), 
+                    'FAILED', 
+                    0, 
+                    error_message
+                )
+            except Exception as log_e:
+                logger.error(f"记录失败日志时出错: {str(log_e)}")
             
             return False
         finally:
@@ -433,13 +640,16 @@ class StockDataUpdater:
             updated_count = self._update_stock_daily(stock_codes, start_date_str, end_date_str)
             
             # 记录同步日志
-            self._log_sync(
-                'FULL_DATA', 
-                start_time, 
-                datetime.now(), 
-                'SUCCESS', 
-                updated_count
-            )
+            try:
+                self._log_sync(
+                    'FULL_DATA', 
+                    start_time, 
+                    datetime.now(), 
+                    'SUCCESS', 
+                    updated_count
+                )
+            except Exception as log_e:
+                logger.error(f"记录成功日志时出错: {str(log_e)}")
             
             logger.info(f"全量更新完成，共更新 {updated_count} 条记录")
             return True
@@ -449,14 +659,17 @@ class StockDataUpdater:
             logger.error(f"全量更新失败: {error_message}")
             
             # 记录同步失败日志
-            self._log_sync(
-                'FULL_DATA', 
-                start_time, 
-                datetime.now(), 
-                'FAILED', 
-                0, 
-                error_message
-            )
+            try:
+                self._log_sync(
+                    'FULL_DATA', 
+                    start_time, 
+                    datetime.now(), 
+                    'FAILED', 
+                    0, 
+                    error_message
+                )
+            except Exception as log_e:
+                logger.error(f"记录失败日志时出错: {str(log_e)}")
             
             return False
         finally:
