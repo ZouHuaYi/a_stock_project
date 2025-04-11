@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 from selector.base_selector import BaseSelector
 from utils.logger import get_logger
-from utils.db_manager import DatabaseManager
+from data.db_manager import DatabaseManager
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 class VolumeSelector(BaseSelector):
     """量能选股器，基于成交量和主力行为特征选股"""
     
-    def __init__(self, days=120, threshold=2, limit=30):
+    def __init__(self, days=365, threshold=2, limit=30):
         """
         初始化量能选股器
         
@@ -370,22 +370,9 @@ class VolumeSelector(BaseSelector):
                 
             # 保存结果
             self.results = df_results
-            self.save_results(df_results)
+            # self.save_results(df_results)
             
             return df_results
         else:
             logger.warning("未找到符合条件的股票")
             return pd.DataFrame()
-
-
-if __name__ == '__main__':
-    # 直接运行测试
-    selector = VolumeSelector()
-    results = selector.run_screening()
-    
-    # 保存结果
-    if not results.empty:
-        selector.save_results(
-            results, 
-            f"volume_selection_{datetime.now().strftime('%Y%m%d')}.csv"
-        ) 

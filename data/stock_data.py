@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import time
 import os
+import concurrent.futures
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 
@@ -13,6 +14,7 @@ from typing import List, Dict, Optional, Tuple
 from config import DATA_CONFIG, TABLE_SCHEMAS
 from data.db_manager import DatabaseManager
 from utils.logger import get_logger
+from utils.task_runner import TaskRunner
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -112,26 +114,98 @@ class StockDataUpdater:
         logger.info(f"更新股票 market_cap industry list_date 字段, {len(stocks)} 只股票")
         try:
             error_update_list = []
-            # 更新数据库中 market_cap 字段 和 list_date 字段
-            for index, row in stocks.iterrows():
-                stock_code = row['stock_code']
-                try:
-                    # 获取股票基本信息
-                    stock_info = ak.stock_individual_info_em(symbol=f"{stock_code}", timeout=6000)
-                    industry = stock_info.iloc[6, 1]
-                    market_cap = stock_info.iloc[4, 1]    
-                    list_date = stock_info.iloc[7, 1]
-                    # market_cap 是 decimal 类型，需要转换为 float 类型
-                    market_cap = float(market_cap)
-                    update_sql = f"UPDATE stock_basic SET industry = '{industry}', market_cap = {market_cap}, list_date = '{list_date}' WHERE stock_code = '{stock_code}'"
-                    logger.info(f"{index} 、更新股票 {stock_code} 基本信息")
-                    self.db_manager.execute_and_commit(update_sql) 
-                    
-                except Exception as e:
-                    logger.error(f"更新股票 {stock_code} 时出错")
-                    error_update_list.append(stock_code)
-      
-            print(error_update_list)
+            # 批量处理更新数据库
+            batch_size = 50  # 每批处理的股票数量
+            total_stocks = len(stocks)
+            
+            # 最多10个线程
+            max_workers = min(10, (total_stocks // batch_size) + 1)
+            
+            def process_batch(batch_stocks):
+                """处理一批股票的函数"""
+                batch_data = []
+                local_error_list = []
+                
+                for index, row in batch_stocks.iterrows():
+                    stock_code = row['stock_code']
+                    try:
+                        # 获取股票基本信息
+                        stock_info = ak.stock_individual_info_em(symbol=f"{stock_code}", timeout=6000)
+                        # 这里数据如果边了需要重新整理
+                        industry = stock_info.iloc[6, 1]
+                        market_cap = stock_info.iloc[4, 1]    
+                        list_date = stock_info.iloc[7, 1]
+                        # market_cap 是 decimal 类型，需要转换为 float 类型
+                        market_cap = float(market_cap)
+                        
+                        # 将数据添加到批次列表
+                        batch_data.append((industry, market_cap, list_date, stock_code))
+                        
+                    except Exception as e:
+                        logger.error(f"获取股票 {stock_code} 基本信息时出错: {str(e)}")
+                        local_error_list.append(stock_code)
+                
+                # 如果批次有数据，则执行批量更新
+                update_results = {}
+                if batch_data:
+                    local_db_manager = DatabaseManager()  # 为每个线程创建单独的数据库连接
+                    try:
+                        # 使用参数化查询进行批量更新
+                        update_sql = "UPDATE stock_basic SET industry = %s, market_cap = %s, list_date = %s WHERE stock_code = %s"
+                        success = local_db_manager.executemany_and_commit(update_sql, batch_data)
+                        if success:
+                            logger.info(f"批量更新 {len(batch_data)} 只股票的基本信息成功")
+                        else:
+                            # 如果批量更新失败，尝试单个更新
+                            for industry, market_cap, list_date, stock_code in batch_data:
+                                try:
+                                    single_update_sql = "UPDATE stock_basic SET industry = %s, market_cap = %s, list_date = %s WHERE stock_code = %s"
+                                    single_success = local_db_manager.execute_and_commit(single_update_sql, (industry, market_cap, list_date, stock_code))
+                                    if not single_success:
+                                        local_error_list.append(stock_code)
+                                except Exception as se:
+                                    logger.error(f"单独更新股票 {stock_code} 基本信息时出错: {str(se)}")
+                                    local_error_list.append(stock_code)
+                    except Exception as e:
+                        logger.error(f"批量更新股票基本信息时出错: {str(e)}")
+                        # 批量更新失败，记录所有股票为错误
+                        local_error_list.extend([data[3] for data in batch_data if data[3] not in local_error_list])
+                    finally:
+                        local_db_manager.close()
+                
+                update_results['errors'] = local_error_list
+                update_results['processed'] = len(batch_data)
+                return update_results
+            
+            # 将股票列表分批
+            batches = []
+            for batch_start in range(0, total_stocks, batch_size):
+                batch_end = min(batch_start + batch_size, total_stocks)
+                batches.append(stocks.iloc[batch_start:batch_end])
+            
+            # 使用TaskRunner处理批次任务
+            processed_count = 0
+            with TaskRunner(use_threads=True, max_workers=max_workers) as task_runner:
+                # 提交所有批次任务
+                task_args_list = [(batch,) for batch in batches]
+                results = task_runner.run_tasks(process_batch, task_args_list)
+                
+                # 处理结果
+                for i, result in enumerate(results):
+                    if result:
+                        processed_count += result['processed']
+                        if result['errors']:
+                            error_update_list.extend(result['errors'])
+                            logger.warning(f"批次 {i+1} 中有 {len(result['errors'])} 只股票更新失败")
+                    else:
+                        logger.error(f"批次 {i+1} 处理失败或超时")
+            
+            if error_update_list:
+                logger.warning(f"更新失败的股票列表: {error_update_list}")
+                # 再一次处理 error_update_list 中的股票
+                self._update_stock_basic(pd.DataFrame(error_update_list, columns=['stock_code']))
+            
+            logger.info(f"共处理 {processed_count} 只股票，其中 {len(error_update_list)} 只更新失败")
             return True
         except Exception as e:
             logger.error(f"更新股票基本信息时出错: {str(e)}")
@@ -248,7 +322,7 @@ class StockDataUpdater:
                 for col in ['open', 'close', 'high', 'low', 'volume', 'amount']:
                     if col in all_new_data.columns:
                         all_new_data[col] = all_new_data[col].astype(float)
-                print(all_new_data)
+                        
                 # 合并已有数据和新数据
                 if not existing_data.empty:
                     # 确保一致的日期格式
@@ -481,15 +555,70 @@ class StockDataUpdater:
         if result and result['last_sync']:
             return result['last_sync']
         return None
-        
-    def incremental_update(self) -> bool:
+    
+    def init_stock_basic(self) -> bool:
         """
-        增量更新股票数据
+        初始化股票基本信息
+        
+        返回:
+            bool: 是否成功初始化
+        """
+        logger.info("开始初始化股票基本信息")
+        start_time = datetime.now()
+        try:
+             # 确保表存在
+            if not self._ensure_tables_exist():
+                raise Exception("创建必要的表失败")
+            
+            # 获取上次同步时间
+            last_sync = self._get_last_sync_date('BASIC_DATA')
+            # 计算增量更新的日期范围
+            end_date = datetime.now()
+            
+            if last_sync:
+                # 从上次同步的第二天开始
+                start_date = last_sync + timedelta(days=1)
+                if start_date >= end_date:
+                    logger.info("数据已是最新，无需更新")
+                    return True
+           
+            # 获取股票列表
+            stock_list = self._fetch_stock_list()
+            if stock_list.empty:
+                raise Exception("获取股票列表失败")
+            
+            # 更新股票基本信息
+            if not self._update_stock_basic(stock_list):
+                logger.warning("更新股票基本信息失败")
+                return False
+
+            # 记录同步日志
+            try:
+                self._log_sync(
+                    'BASIC_DATA', 
+                    start_time, 
+                    datetime.now(), 
+                    'SUCCESS', 
+                    stock_list.shape[0])
+            except Exception as log_e:
+                logger.error(f"记录成功日志时出错: {str(log_e)}")
+
+            return True
+        except Exception as e:
+            logger.error(f"初始化股票基本信息时出错: {str(e)}")
+            return False
+        finally:
+            # 关闭数据库连接
+            self.db_manager.close()
+        
+    def init_daily_data(self) -> bool:
+        """
+        初始化股票日线数据
         
         返回:
             bool: 是否成功更新
         """
-        logger.info("开始增量更新股票数据")
+        logger.info("开始初始化股票日线数据")
         start_time = datetime.now()
         
         try:
@@ -497,17 +626,6 @@ class StockDataUpdater:
             if not self._ensure_tables_exist():
                 raise Exception("创建必要的表失败")
             
-            # 获取股票列表
-            stock_list = self._fetch_stock_list()
-            if stock_list.empty:
-                raise Exception("获取股票列表失败")
-                
-            # # 更新股票基本信息
-            if not self._update_stock_basic(stock_list):
-                logger.warning("更新股票基本信息失败")
-            return
-
-
             # 获取上次同步时间
             last_sync = self._get_last_sync_date('DAILY_DATA')
             
@@ -541,10 +659,6 @@ class StockDataUpdater:
             stock_list = self._fetch_stock_list()
             if stock_list.empty:
                 raise Exception("获取股票列表失败")
-                
-            # 更新股票基本信息
-            if not self._update_stock_basic(stock_list):
-                logger.warning("更新股票基本信息失败")
                 
             # 获取所有股票代码
             stock_codes = stock_list['stock_code'].tolist()
@@ -602,75 +716,17 @@ class StockDataUpdater:
             bool: 是否成功更新
         """
         logger.info("开始全量更新股票数据")
-        start_time = datetime.now()
         
         try:
-            # 确保表存在
-            if not self._ensure_tables_exist():
-                raise Exception("创建必要的表失败")
-                
-            # 计算全量更新的日期范围
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=DATA_CONFIG['initial_days'])
+            if not self.init_stock_basic():
+                raise Exception("初始化股票基本信息失败")
             
-            # 格式化日期
-            start_date_str = start_date.strftime('%Y%m%d')
-            end_date_str = end_date.strftime('%Y%m%d')
+            if not self.init_daily_data():
+                raise Exception("初始化股票日线数据失败")
             
-            logger.info(f"全量更新日期范围: {start_date_str} 至 {end_date_str}")
-            
-            # 获取股票列表
-            stock_list = self._fetch_stock_list()
-            if stock_list.empty:
-                raise Exception("获取股票列表失败")
-                
-            # 更新股票基本信息
-            if not self._update_stock_basic(stock_list):
-                logger.warning("更新股票基本信息失败")
-                
-            # 获取所有股票代码
-            stock_codes = stock_list['stock_code'].tolist()
-            
-            # 测试模式限制股票数量
-            if 'test_stock_limit' in DATA_CONFIG and DATA_CONFIG['test_stock_limit'] > 0:
-                stock_codes = stock_codes[:DATA_CONFIG['test_stock_limit']]
-                logger.info(f"测试模式: 限制处理 {len(stock_codes)} 只股票")
-                
-            # 更新股票日线数据
-            updated_count = self._update_stock_daily(stock_codes, start_date_str, end_date_str)
-            
-            # 记录同步日志
-            try:
-                self._log_sync(
-                    'FULL_DATA', 
-                    start_time, 
-                    datetime.now(), 
-                    'SUCCESS', 
-                    updated_count
-                )
-            except Exception as log_e:
-                logger.error(f"记录成功日志时出错: {str(log_e)}")
-            
-            logger.info(f"全量更新完成，共更新 {updated_count} 条记录")
-            return True
-            
+            return True  
         except Exception as e:
-            error_message = str(e)
-            logger.error(f"全量更新失败: {error_message}")
-            
-            # 记录同步失败日志
-            try:
-                self._log_sync(
-                    'FULL_DATA', 
-                    start_time, 
-                    datetime.now(), 
-                    'FAILED', 
-                    0, 
-                    error_message
-                )
-            except Exception as log_e:
-                logger.error(f"记录失败日志时出错: {str(log_e)}")
-            
+            logger.error(f"全量更新失败: {str(e)}")
             return False
         finally:
             # 关闭数据库连接

@@ -44,7 +44,7 @@ CREATE DATABASE stock_data_news CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
 首次使用前，请更新股票数据：
 
 ```bash
-python run.py update --full
+python run.py update [--basic] [--daily] [--full]
 ```
 
 ### 选股功能

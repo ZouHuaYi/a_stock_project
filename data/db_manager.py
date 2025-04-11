@@ -21,7 +21,7 @@ class DatabaseManager:
     def __init__(self):
         """初始化数据库管理器"""
         self.engine = None
-        self.connection = None
+        self.conn = None
         self.connect()
     
     def connect(self) -> bool:
@@ -34,6 +34,17 @@ class DatabaseManager:
         try:
             # 创建数据库引擎
             self.engine = create_engine(DB_CONFIG['connection_string'])
+            
+            # 创建pymysql连接
+            self.conn = pymysql.connect(
+                host=DB_CONFIG['host'], 
+                port=int(DB_CONFIG['port']), 
+                user=DB_CONFIG['user'], 
+                password=DB_CONFIG['password'], 
+                database=DB_CONFIG['database'],
+                charset='utf8mb4',
+                cursorclass=pymysql.cursors.DictCursor
+            )
             
             # 测试连接
             with self.engine.connect() as conn:
@@ -51,47 +62,64 @@ class DatabaseManager:
         try:
             if self.engine:
                 self.engine.dispose()
-                logger.info("数据库连接已关闭")
+            if self.conn:
+                self.conn.close()
+            logger.info("数据库连接已关闭")
         except Exception as e:
             logger.error(f"关闭数据库连接失败: {e}")
     
     def execute_and_commit(self, sql: str, params: tuple = None) -> bool:
         """
-        执行SQL语句并提交
+        执行SQL并提交
         
         参数:
             sql (str): SQL语句
-            params (tuple, 可选): SQL参数
+            params (tuple, 可选): 参数
             
         返回:
-            bool: 是否成功执行
+            bool: 是否成功
         """
+        cursor = None
         try:
-            with self.engine.connect() as connection:
-                if params:
-                    # 将params转换为字典格式
-                    if isinstance(params, tuple):
-                        # 提取SQL中的参数占位符名称
-                        param_names = []
-                        current_sql = sql
-                        for i in range(len(params)):
-                            param_name = f"p{i}"
-                            param_names.append(param_name)
-                            # 将SQL中的%s替换为:param_name
-                            current_sql = current_sql.replace("%s", f":{param_name}", 1)
-                        
-                        # 创建参数字典
-                        param_dict = {name: value for name, value in zip(param_names, params)}
-                        connection.execute(text(current_sql), param_dict)
-                    else:
-                        connection.execute(text(sql), params)
-                else:
-                    connection.execute(text(sql))
-                connection.commit()
+            cursor = self.conn.cursor()
+            if params:
+                cursor.execute(sql, params)
+            else:
+                cursor.execute(sql)
+            self.conn.commit()
             return True
         except Exception as e:
-            logger.error(f"执行SQL失败: {e}")
+            logger.error(f"执行SQL失败: {str(e)}, SQL: {sql}")
+            self.conn.rollback()
             return False
+        finally:
+            if cursor:
+                cursor.close()
+    
+    def executemany_and_commit(self, sql: str, params_list: list) -> bool:
+        """
+        批量执行SQL并提交
+        
+        参数:
+            sql (str): SQL语句
+            params_list (list): 参数列表，每个元素是一个参数元组
+            
+        返回:
+            bool: 是否成功
+        """
+        cursor = None
+        try:
+            cursor = self.conn.cursor()
+            cursor.executemany(sql, params_list)
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"批量执行SQL失败: {str(e)}, SQL: {sql}")
+            self.conn.rollback()
+            return False
+        finally:
+            if cursor:
+                cursor.close()
     
     def fetch_one(self, sql: str, params: tuple = None) -> Optional[Dict]:
         """

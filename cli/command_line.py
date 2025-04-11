@@ -25,7 +25,7 @@ def parse_args():
     
     # 选股子命令
     select_parser = subparsers.add_parser('select', help='选股功能')
-    select_parser.add_argument('selector_type', choices=['volume', 'technical', 'combined'], 
+    select_parser.add_argument('selector_type', choices=['volume', 'chan'], 
                               default='volume', nargs='?', help='选股器类型')
     select_parser.add_argument('--days', type=int, help='回溯数据天数')
     select_parser.add_argument('--threshold', type=float, help='选股分数阈值')
@@ -45,6 +45,8 @@ def parse_args():
     # 更新数据子命令
     update_parser = subparsers.add_parser('update', help='更新股票数据')
     update_parser.add_argument('--full', action='store_true', help='执行全量更新')
+    update_parser.add_argument('--basic', action='store_true', help='执行股票基本信息更新')
+    update_parser.add_argument('--daily', action='store_true', help='执行股票日线数据更新')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -67,12 +69,9 @@ def handle_select(args):
         if selector_type == 'volume':
             from selector.volume_selector import VolumeSelector
             selector = VolumeSelector(days=args.days, threshold=args.threshold, limit=args.limit)
-        elif selector_type == 'technical':
-            from selector.technical_selector import TechnicalSelector # type: ignore
-            selector = TechnicalSelector(days=args.days, threshold=args.threshold, limit=args.limit)
-        elif selector_type == 'combined':
-            from selector.combined_selector import CombinedSelector # type: ignore
-            selector = CombinedSelector(days=args.days, threshold=args.threshold, limit=args.limit)
+        elif selector_type == 'chan':
+            from selector.chan_selector import ChanSelector
+            selector = ChanSelector(days=args.days, threshold=args.threshold, limit=args.limit)
         else:
             logger.error(f"未知的选股器类型: {selector_type}")
             return
@@ -178,9 +177,11 @@ def handle_update(args):
         updater = StockDataUpdater()
         if args.full:
             success = updater.full_update()
-        else:
-            success = updater.incremental_update()
-            
+        elif args.basic:
+            success = updater.init_stock_basic()
+        elif args.daily:
+            success = updater.init_daily_data()
+        
         if success:
             logger.info("数据更新成功完成")
         else:
@@ -195,7 +196,7 @@ def main():
     """
     # 解析命令行参数
     args = parse_args()
-    
+    print(args)
     # 根据命令执行相应功能
     if args.command == 'select':
         handle_select(args)

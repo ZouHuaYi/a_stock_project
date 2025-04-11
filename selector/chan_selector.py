@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 from selector.base_selector import BaseSelector
 from utils.logger import get_logger
-from utils.db_manager import DatabaseManager
+from data.db_manager import DatabaseManager
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -301,13 +301,13 @@ class ChanSelector(BaseSelector):
             # 按分数排序
             df_results = df_results.sort_values('score', ascending=False).reset_index(drop=True)
             
-            # 限制返回数量
+            # 限制返回数量f
             if self.limit and len(df_results) > self.limit:
                 df_results = df_results.head(self.limit)
                 
             # 保存结果
             self.results = df_results
-            self.save_results(df_results)
+            # self.save_results(df_results)
             
             return df_results
         else:

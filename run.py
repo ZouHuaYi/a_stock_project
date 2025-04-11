@@ -4,9 +4,9 @@
 A股选股与分析工具 - 主入口文件
 
 使用方法:
-    - 选股功能: python run.py select [volume|technical|combined] [--options]
+    - 选股功能: python run.py select [volume|chan] [--options]
     - 分析功能: python run.py analyze [volprice|golden|deepseek] 股票代码 [--options]
-    - 更新数据: python run.py update [--full]
+    - 更新数据: python run.py update [--basic] [--daily] [--full]
     
 详细选项请使用 python run.py -h 查看帮助
 """
