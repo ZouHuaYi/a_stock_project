@@ -200,23 +200,15 @@ class AkshareAPI:
             # 重试机制
             for i in range(self.retry_count):
                 try:
-                    # 通过 AkShare 获取财务数据
-                    # 可以根据需要选择不同的财务报表，这里使用资产负债表作为示例
-                    balance_sheet = ak.stock_financial_report_sina(stock=stock_code, symbol="资产负债表")
-                    income_statement = ak.stock_financial_report_sina(stock=stock_code, symbol="利润表")
-                    cash_flow = ak.stock_financial_report_sina(stock=stock_code, symbol="现金流量表")
+                    # 使用 AkShare 的 stock_financial_analysis_indicator 获取财务数据
+                    financial_data = ak.stock_financial_analysis_indicator(symbol=stock_code, start_year=start_year)
                     
-                    # 合并数据
-                    combined_data = {
-                        '资产负债表': balance_sheet,
-                        '利润表': income_statement,
-                        '现金流量表': cash_flow
-                    }
+                    if not financial_data.empty:
+                        logger.info(f"成功获取 {stock_code} 财务数据，共 {len(financial_data)} 条记录")
+                        return financial_data
                     
-                    # 可以根据需要进行更多处理，比如数据清理、格式化等
-                    
-                    logger.info(f"成功获取 {stock_code} 财务数据")
-                    return combined_data
+                    logger.warning(f"获取股票 {stock_code} 财务数据失败，第 {i+1} 次重试中...")
+                    time.sleep(self.retry_interval)
                     
                 except Exception as e:
                     logger.error(f"获取股票 {stock_code} 财务数据出错 (尝试 {i+1}/{self.retry_count}): {str(e)}")
@@ -455,14 +447,14 @@ class AkshareAPI:
             logger.error(f"生成技术分析摘要时出错: {str(e)}")
             return {}
     
-    def generate_financial_summary(self, stock_code: str, stock_name: str, financial_reports: Dict) -> Dict:
+    def generate_financial_summary(self, stock_code: str, stock_name: str, financial_reports: pd.DataFrame) -> Dict:
         """
         生成财务分析摘要
         
         参数:
             stock_code (str): 股票代码
             stock_name (str): 股票名称
-            financial_reports (Dict): 财务报表数据
+            financial_reports (pd.DataFrame): 财务报表数据
             
         返回:
             Dict: 财务分析摘要
@@ -474,60 +466,113 @@ class AkshareAPI:
         }
         
         try:
-            # 检查是否有有效的财务数据
-            if not financial_reports or all(df.empty for df in financial_reports.values() if isinstance(df, pd.DataFrame)):
-                logger.warning(f"股票 {stock_code} 没有有效的财务数据")
+            # 检查财务数据是否为空
+            if financial_reports is None or not isinstance(financial_reports, pd.DataFrame) or financial_reports.empty:
+                logger.warning(f"股票 {stock_code} 的财务数据为空或格式不正确")
+                summary['财务状况'] = '无财务数据'
                 return summary
-            
-            # 处理资产负债表
-            if '资产负债表' in financial_reports and not financial_reports['资产负债表'].empty:
-                balance_sheet = financial_reports['资产负债表']
-                # 提取最新的资产负债表数据
-                latest_balance = balance_sheet.iloc[:, :2]  # 假设第一列是项目名，第二列是最新数据
-                # 提取关键指标
-                balance_summary = {}
-                for index, row in latest_balance.iterrows():
-                    item_name = row.iloc[0]
-                    if item_name in ['总资产', '总负债', '所有者权益(或股东权益)合计', '流动资产合计', '流动负债合计']:
-                        balance_summary[item_name] = row.iloc[1]
-                        
-                summary['资产负债'] = balance_summary
                 
-            # 处理利润表
-            if '利润表' in financial_reports and not financial_reports['利润表'].empty:
-                income_statement = financial_reports['利润表']
-                # 提取最新的利润表数据
-                latest_income = income_statement.iloc[:, :2]  # 假设第一列是项目名，第二列是最新数据
-                
-                # 提取关键指标
-                income_summary = {}
-                for index, row in latest_income.iterrows():
-                    item_name = row.iloc[0]
-                    if item_name in ['营业总收入', '营业利润', '利润总额', '净利润', '基本每股收益']:
-                        income_summary[item_name] = row.iloc[1]
-                        
-                summary['盈利能力'] = income_summary
+            # 获取最新一期的财务数据
+            latest_data = financial_reports.iloc[0]  # 假设数据是按时间降序排列的
             
-            # 处理现金流量表
-            if '现金流量表' in financial_reports and not financial_reports['现金流量表'].empty:
-                cash_flow = financial_reports['现金流量表']
-                # 提取最新的现金流量表数据
-                latest_cash = cash_flow.iloc[:, :2]  # 假设第一列是项目名，第二列是最新数据
-                
-                # 提取关键指标
-                cash_summary = {}
-                for index, row in latest_cash.iterrows():
-                    item_name = row.iloc[0]
-                    if item_name in ['经营活动产生的现金流量净额', '投资活动产生的现金流量净额', '筹资活动产生的现金流量净额']:
-                        cash_summary[item_name] = row.iloc[1]
-                        
-                summary['现金流'] = cash_summary
+            # 提取关键财务指标
+            key_metrics = {}
+            possible_metrics = {
+                'roe': '净资产收益率(%)',  # 盈利能力
+                'net_profit_margin': '销售净利率(%)',  # 盈利能力
+                'gross_profit_margin': '销售毛利率(%)',  # 盈利能力
+                'debt_to_asset_ratio': '资产负债率(%)',  # 偿债能力
+                'current_ratio': '流动比率',  # 短期偿债能力
+                'quick_ratio': '速动比率',  # 短期偿债能力
+                'total_asset_turnover': '总资产周转率(次)',  # 营运能力
+                'eps': '摊薄每股收益(元)',  # 每股指标
+                'net_profit_growth_rate': '净利润增长率(%)'  # 成长能力
+            }
             
-            logger.info(f"生成 {stock_code} 财务分析摘要完成")
+            # 尝试找到对应的列名
+            for key, col_name in possible_metrics.items():
+                if col_name in latest_data.index:
+                    key_metrics[key] = latest_data[col_name]
+                    logger.debug(f"找到指标: {col_name} = {key_metrics[key]}")
+                else:
+                    key_metrics[key] = 'N/A'
+                    logger.debug(f"未找到指标: {col_name}")
+            
+            # 生成财务分析摘要
+            if latest_data.name:
+                summary['报告期'] = str(latest_data.name)
+                
+            # 添加盈利能力指标
+            profit_metrics = {}
+            if key_metrics['roe'] != 'N/A':
+                profit_metrics['净资产收益率'] = key_metrics['roe']
+            if key_metrics['net_profit_margin'] != 'N/A':
+                profit_metrics['销售净利率'] = key_metrics['net_profit_margin']
+            if key_metrics['gross_profit_margin'] != 'N/A':
+                profit_metrics['销售毛利率'] = key_metrics['gross_profit_margin']
+            if profit_metrics:
+                summary['盈利能力'] = profit_metrics
+            
+            # 添加偿债能力指标
+            debt_metrics = {}
+            if key_metrics['debt_to_asset_ratio'] != 'N/A':
+                debt_metrics['资产负债率'] = key_metrics['debt_to_asset_ratio']
+            if key_metrics['current_ratio'] != 'N/A':
+                debt_metrics['流动比率'] = key_metrics['current_ratio']
+            if key_metrics['quick_ratio'] != 'N/A':
+                debt_metrics['速动比率'] = key_metrics['quick_ratio']
+            if debt_metrics:
+                summary['偿债能力'] = debt_metrics
+            
+            # 添加营运能力指标
+            if key_metrics['total_asset_turnover'] != 'N/A':
+                summary['营运能力'] = {'总资产周转率': key_metrics['total_asset_turnover']}
+            
+            # 添加每股指标
+            if key_metrics['eps'] != 'N/A':
+                summary['每股指标'] = {'摊薄每股收益': key_metrics['eps']}
+            
+            # 添加成长能力指标
+            if key_metrics['net_profit_growth_rate'] != 'N/A':
+                summary['成长能力'] = {'净利润增长率': key_metrics['net_profit_growth_rate']}
+            
+            # 如果未找到任何指标，添加提示
+            if len(summary) <= 3:  # 只有基本的三个字段
+                summary['财务状况'] = '未能提取到有效财务指标'
+            
+            # 添加财务评价
+            roe_value = pd.to_numeric(key_metrics['roe'], errors='coerce')
+            debt_ratio_value = pd.to_numeric(key_metrics['debt_to_asset_ratio'], errors='coerce')
+            
+            evaluation = []
+            if pd.notna(roe_value):
+                if roe_value > 15:
+                    evaluation.append("盈利能力较强 (ROE > 15%)")
+                elif roe_value > 10:
+                    evaluation.append("盈利能力良好 (ROE > 10%)")
+                elif roe_value > 5:
+                    evaluation.append("盈利能力一般 (ROE > 5%)")
+                else:
+                    evaluation.append("盈利能力较弱 (ROE < 5%)")
+                    
+            if pd.notna(debt_ratio_value):
+                if debt_ratio_value < 40:
+                    evaluation.append("财务结构稳健 (资产负债率 < 40%)")
+                elif debt_ratio_value < 60:
+                    evaluation.append("财务结构一般 (资产负债率 < 60%)")
+                else:
+                    evaluation.append("负债水平较高 (资产负债率 > 60%)")
+                    
+            if evaluation:
+                summary['财务评价'] = evaluation
+            
+            logger.info(f"生成 {stock_code} 财务分析摘要完成，包含字段: {list(summary.keys())}")
             return summary
             
         except Exception as e:
-            logger.error(f"生成财务分析摘要时出错xxxx: {str(e)}")
+            logger.error(f"生成财务分析摘要时出错: {str(e)}")
+            # 即使出错也返回基本信息
+            summary['出错信息'] = str(e)
             return summary
     
     def get_news_sentiment(self, stock_code: str, stock_name: str = None, days: int = 30) -> pd.DataFrame:

@@ -97,6 +97,11 @@ class DeepseekAnalyzer(BaseAnalyzer):
             )
             if self.financial_data is not None and not (isinstance(self.financial_data, pd.DataFrame) and self.financial_data.empty):
                 logger.info(f"成功获取 {self.stock_code} 的财务数据")
+                # 添加调试日志
+                logger.debug(f"财务数据类型: {type(self.financial_data)}")
+                if isinstance(self.financial_data, dict):
+                    for key, value in self.financial_data.items():
+                        logger.debug(f"{key} 数据类型: {type(value)}, 是否为空: {value.empty if isinstance(value, pd.DataFrame) else '非DataFrame'}")
                 return True
             logger.warning(f"未获取到 {self.stock_code} 的财务数据")
             return False
@@ -147,17 +152,21 @@ class DeepseekAnalyzer(BaseAnalyzer):
         summary = akshare.generate_technical_summary(self.daily_data, self.indicators)
         return summary
 
-    def generate_financial_summary(self) -> str:
+    def generate_financial_summary(self) -> dict:
         """生成财务分析摘要"""
         if self.financial_data is None:
             return None
         
         akshare = AkshareAPI()
-        return akshare.generate_financial_summary(
+        summary = akshare.generate_financial_summary(
             stock_code=self.stock_code,
             stock_name=self.stock_name,
             financial_reports=self.financial_data
         )
+        
+        # 存储摘要
+        self.financial_summary = summary
+        return summary
     
     def generate_news_summary(self) -> dict:
         """生成新闻舆情摘要"""
@@ -304,10 +313,47 @@ class DeepseekAnalyzer(BaseAnalyzer):
         report_parts.append(tech_analysis)
         
         # 财务分析部分
-        finance_analysis = f"""
-        基本面分析：
-        {fin_summary if isinstance(fin_summary, str) else '无财务数据'}
-        """
+        if isinstance(fin_summary, dict) and len(fin_summary) > 3:  # 排除只包含基本信息的摘要
+            # 提取关键财务指标
+            finance_analysis = "\n        基本面分析：\n"
+            
+            if '报告期' in fin_summary:
+                finance_analysis += f"        最新报告期：{fin_summary['报告期']}\n"
+                
+            if '盈利能力' in fin_summary:
+                finance_analysis += "        盈利能力：\n"
+                for k, v in fin_summary['盈利能力'].items():
+                    finance_analysis += f"        - {k}: {v}\n"
+                    
+            if '偿债能力' in fin_summary:
+                finance_analysis += "        偿债能力：\n"
+                for k, v in fin_summary['偿债能力'].items():
+                    finance_analysis += f"        - {k}: {v}\n"
+                    
+            if '营运能力' in fin_summary:
+                finance_analysis += "        营运能力：\n"
+                for k, v in fin_summary['营运能力'].items():
+                    finance_analysis += f"        - {k}: {v}\n"
+                    
+            if '每股指标' in fin_summary:
+                finance_analysis += "        每股指标：\n"
+                for k, v in fin_summary['每股指标'].items():
+                    finance_analysis += f"        - {k}: {v}\n"
+                    
+            if '成长能力' in fin_summary:
+                finance_analysis += "        成长能力：\n"
+                for k, v in fin_summary['成长能力'].items():
+                    finance_analysis += f"        - {k}: {v}\n"
+                    
+            if '财务评价' in fin_summary:
+                finance_analysis += "        财务评价：\n"
+                for item in fin_summary['财务评价']:
+                    finance_analysis += f"        - {item}\n"
+        elif isinstance(fin_summary, str):
+            finance_analysis = f"\n        基本面分析：\n        {fin_summary}\n"
+        else:
+            finance_analysis = "\n        基本面分析：\n        无有效财务数据\n"
+            
         report_parts.append(finance_analysis)
         
         # 新闻舆情分析部分
