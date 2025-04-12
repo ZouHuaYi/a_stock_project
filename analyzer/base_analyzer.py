@@ -113,7 +113,7 @@ class BaseAnalyzer:
                 adjust="qfq"  # 前复权
             )
             
-            if not df.empty:
+            if isinstance(df, pd.DataFrame) and not df.empty:
                 # 按照回溯天数筛选
                 if 'trade_date' in df.columns:
                     df = df[(df['trade_date'] >= self.start_date.strftime('%Y-%m-%d')) & 
@@ -121,10 +121,6 @@ class BaseAnalyzer:
                     df.set_index('trade_date', inplace=True)
                 
                 logger.info(f"成功获取 {len(df)} 条 {self.stock_code} 数据")
-                
-                # 使用工具函数计算技术指标
-                df = calculate_basic_indicators(df)
-                self.daily_data = df
                 return df
             else:
                 logger.warning(f"未找到股票 {self.stock_code} 的数据")
