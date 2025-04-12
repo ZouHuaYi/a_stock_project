@@ -18,6 +18,7 @@ from analyzer.base_analyzer import BaseAnalyzer
 from utils.indicators import plot_stock_chart, calculate_technical_indicators
 from utils.logger import get_logger
 from utils.akshare_api import AkshareAPI
+from utils.tavily_api import TavilyAPI
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
 plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -43,6 +44,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
         """
         super().__init__(stock_code, stock_name, end_date, days)
         self.ai_type = ai_type
+        self.tavily_api = TavilyAPI()
         
         # 初始化各类数据属性
         self.financial_data = None
@@ -99,18 +101,39 @@ class DeepseekAnalyzer(BaseAnalyzer):
     def fetch_news_sentiment(self, days=30) -> bool:
         """获取新闻舆情数据"""
         try:
-            akshare = AkshareAPI()
-            self.news_data = akshare.get_news_sentiment(
-                stock_code=self.stock_code,
-                stock_name=self.stock_name,
-                days=days
-            )
+            # 确保股票名称已获取
+            if not self.stock_name:
+                self.stock_name = self.get_stock_name()
+                if not self.stock_name:
+                    logger.warning(f"未获取到 {self.stock_code} 的股票名称")
+                    return False
+
+            logger.info(f"正在使用Tavily搜索{self.stock_name}的相关新闻...")
             
-            if self.news_data is not None and not self.news_data.empty:
-                logger.info(f"成功获取 {self.stock_code} 的新闻舆情数据")
-                return True
-            logger.warning(f"未获取到 {self.stock_code} 的新闻舆情数据")
-            return False
+            # 创建查询参数
+            query = f"{self.stock_code} {self.stock_name} 股票"
+            payload = {
+                "query": query,
+                "search_depth": "basic",  
+                "max_results": 10, 
+                "include_domains": ["eastmoney.com", "sina.com.cn", "10jqka.com.cn"]
+            }
+            
+            # 获取数据
+            response = self.tavily_api.search_base_news(payload)
+            if response:
+                # 处理Tavily返回的新闻数据
+                self.news_data = self.tavily_api.process_tavily_response(response)
+                if not self.news_data.empty:
+                    logger.info(f"成功获取 {self.stock_code} 的新闻舆情数据")
+                    return True
+                else:
+                    logger.warning(f"未获取到 {self.stock_code} 的新闻舆情数据")
+                    return False
+            else:
+                logger.warning(f"Tavily API返回空数据")
+                return False
+                
         except Exception as e:
             logger.error(f"获取新闻舆情数据失败: {e}")
             return False
@@ -140,9 +163,25 @@ class DeepseekAnalyzer(BaseAnalyzer):
         """生成新闻舆情摘要"""
         if self.news_data is None or self.news_data.empty:
             return None
+            
+        # 情感分析
+        avg_sentiment = self.news_data['sentiment'].mean()
+        sentiment_status = "积极" if avg_sentiment > 0.2 else "消极" if avg_sentiment < -0.2 else "中性"
         
-        akshare = AkshareAPI()
-        return akshare.generate_news_summary(self.news_data)
+        # 词频分析
+        text = ' '.join(self.news_data['title'].tolist())
+        words = [word for word in jieba.cut(text) if len(word) > 1 and word not in ['股票', '公司']]
+        word_freq = Counter(words).most_common(5)
+        
+        summary = {
+            '新闻数量': len(self.news_data),
+            '平均情感得分': round(avg_sentiment, 2),
+            '舆情倾向': sentiment_status,
+            '近期热点话题': [word[0] for word in word_freq],
+            '最新新闻标题': self.news_data.iloc[0]['title']
+        }
+        
+        return summary
     
     def plot_analysis_charts(self, save_filename=None) -> bool:
         """绘制分析图表"""
@@ -250,6 +289,10 @@ class DeepseekAnalyzer(BaseAnalyzer):
     
     def _generate_analysis_report(self, tech_summary, fin_summary, news_summary, additional_context) -> str:
         """生成分析报告"""
+        if not isinstance(tech_summary, dict):
+            logger.error("技术分析摘要格式错误")
+            return "无法生成分析报告：技术分析数据格式错误"
+
         report_parts = []
         
         # 添加标题
@@ -272,7 +315,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
         report_parts.append(finance_analysis)
         
         # 新闻舆情分析部分
-        if news_summary:
+        if isinstance(news_summary, dict):
             sentiment = news_summary.get('舆情倾向', '未知')
             news_count = news_summary.get('新闻数量', 0)
             news_analysis = f"""
@@ -288,7 +331,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
             report_parts.append("舆情分析：无相关新闻数据。")
         
         # 综合建议
-        if '短期趋势' in tech_summary:
+        if isinstance(tech_summary, dict) and '短期趋势' in tech_summary:
             if tech_summary['短期趋势'] == '上涨' and (not news_summary or news_summary.get('舆情倾向') != '消极'):
                 recommendation = "综合建议：技术面向好，可考虑逢低买入，注意控制仓位。"
             elif tech_summary['短期趋势'] == '下跌' or (news_summary and news_summary.get('舆情倾向') == '消极'):

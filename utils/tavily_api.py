@@ -15,7 +15,7 @@ class TavilyAPI:
     
     def __init__(self):
         """初始化Tavily API工具"""
-        self.api_key = API_CONFIG.get('TAVILY_API_KEY', '')
+        self.api_key = API_CONFIG.get('tavily', {}).get('api_key', '')
         self.url = "https://api.tavily.com/search"
 
     def search_base_news(self, payload: dict) -> requests.Response:

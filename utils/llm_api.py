@@ -14,9 +14,9 @@ class LLMAPI:
     
     def __init__(self):
         """初始化LLM API工具"""
-        self.GEMINI_API_KEY = API_CONFIG.get('GEMINI_API_KEY', '')
-        self.DEEPSEEK_API_KEY = API_CONFIG.get('DEEPSEEK_API_KEY', '')
-        self.OPENAI_API_KEY = API_CONFIG.get('OPENAI_API_KEY', '')
+        self.GEMINI_API_KEY = API_CONFIG.get('gemini', {}).get('api_key', '')
+        self.OPENAI_API_KEY = API_CONFIG.get('openai', {}).get('api_key', '')
+        self.BASE_URL = API_CONFIG.get('openai', {}).get('base_url', '')
 
     def generate_gemini_response(self, prompt: str) -> str:
         """
@@ -46,9 +46,9 @@ class LLMAPI:
             logger.error(f"Gemini API 调用失败: {str(e)}")
             return ""
 
-    def generate_deepseek_response(self, prompt: str) -> str:
+    def generate_openai_response(self, prompt: str) -> str:
         """
-        生成DeepSeek响应
+        生成OpenAI响应
         
         参数:
             prompt (str): 输入提示
@@ -57,9 +57,9 @@ class LLMAPI:
             str: 模型生成的文本响应
         """
         try:
-            client = OpenAI(api_key=self.DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+            client = OpenAI(api_key=self.OPENAI_API_KEY, base_url=self.BASE_URL)
             response = client.chat.completions.create(
-                model="deepseek-coder",
+                model=self.OPENAI_MODEL,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
@@ -70,8 +70,6 @@ class LLMAPI:
         except Exception as e:
             logger.error(f"DeepSeek API 调用失败: {str(e)}")
             return ""
-            
-    def generate_openai_response(self, prompt: str, model: str = "gpt-4o") -> str:
         """
         生成OpenAI响应
         
@@ -85,7 +83,7 @@ class LLMAPI:
         try:
             client = OpenAI(api_key=self.OPENAI_API_KEY)
             response = client.chat.completions.create(
-                model=model,
+                model=self.OPENAI_MODEL,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
