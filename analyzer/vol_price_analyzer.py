@@ -8,14 +8,20 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 from datetime import datetime, timedelta
-import logging
+from typing import Dict, List, Optional, Union, Any
 
+# 导入基础分析器和工具
 from analyzer.base_analyzer import BaseAnalyzer
+from config import ANALYZER_CONFIG, PATH_CONFIG
+from utils.logger import get_logger
+
+# 创建日志记录器
+logger = get_logger(__name__)
 
 class VolPriceAnalyzer(BaseAnalyzer):
     """量价关系分析器类，用于识别股票的洗盘、拉升等特征"""
     
-    def __init__(self, stock_code, stock_name=None, end_date=None, days=60, save_path="./datas/analysis"):
+    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, days: int = 60):
         """
         初始化量价关系分析器
         
@@ -24,13 +30,8 @@ class VolPriceAnalyzer(BaseAnalyzer):
             stock_name (str, 可选): 股票名称，如不提供则通过基类获取
             end_date (str 或 datetime, 可选): 结束日期，默认为当前日期
             days (int, 可选): 回溯天数，默认60天
-            save_path (str, 可选): 图片保存路径，默认当前目录
         """
         super().__init__(stock_code, stock_name, end_date, days)
-        self.save_path = save_path
-        # 创建保存目录(如果不存在)
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
     
     def prepare_data(self):
         """
@@ -40,7 +41,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             bool: 是否成功准备数据
         """
         if self.daily_data is None or self.daily_data.empty:
-            logging.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
+            logger.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
             return False
         
         try:
@@ -62,7 +63,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             
             return True
         except Exception as e:
-            logging.error(f"准备量价数据时出错: {e}")
+            logger.error(f"准备量价数据时出错: {e}")
             return False
     
     def detect_wash_patterns(self, window=15):
@@ -76,7 +77,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             list: 洗盘特征列表，包含特征类型和位置
         """
         if self.daily_data is None or len(self.daily_data) < window:
-            logging.warning("数据不足，无法检测洗盘特征")
+            logger.warning("数据不足，无法检测洗盘特征")
             return []
         
         # 复制最后window天的数据进行分析
@@ -216,11 +217,14 @@ class VolPriceAnalyzer(BaseAnalyzer):
             save_filename (str, 可选): 保存的文件名，默认为股票代码_洗盘分析_日期.png
         """
         if self.daily_data is None or self.daily_data.empty:
-            logging.warning("无数据可绘制。请先获取数据。")
+            logger.warning("无数据可绘制。请先获取数据。")
             return False
 
         if save_filename is None:
             save_filename = f"{self.stock_code}_洗盘分析_{self.end_date.strftime('%Y%m%d')}.png"
+        else:
+            save_filename = f"{save_filename}.png"
+            
         save_path = os.path.join(self.save_path, save_filename)
         
         # 设置中文字体
@@ -231,11 +235,11 @@ class VolPriceAnalyzer(BaseAnalyzer):
         try:
             analysis_result = self.analyze_vol_price()
             if analysis_result['status'] != 'success':
-                logging.error(f"分析失败，无法绘制图表: {analysis_result.get('message', '未知错误')}")
+                logger.error(f"分析失败，无法绘制图表: {analysis_result.get('message', '未知错误')}")
                 return False
             patterns = analysis_result.get('patterns', [])
         except Exception as e:
-            logging.error(f"分析过程出错: {e}")
+            logger.error(f"分析过程出错: {e}")
             # 使用空模式列表继续绘图
             patterns = []
             analysis_result = {
@@ -335,7 +339,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
                             arrowprops=dict(facecolor='purple', shrink=0.05),
                             horizontalalignment='center', verticalalignment='top')
             except Exception as e:
-                logging.error(f"标记成交量萎缩区域时出错: {e}")
+                logger.error(f"标记成交量萎缩区域时出错: {e}")
         
         # 设置成交量图标题和标签
         ax2.set_title('成交量分析', fontsize=14)
@@ -364,11 +368,11 @@ class VolPriceAnalyzer(BaseAnalyzer):
         try:
             # 保存图表
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            logging.info(f"量价关系分析图已保存至: {save_path}")
+            logger.info(f"量价关系分析图已保存至: {save_path}")
             plt.close(fig)  # 关闭图形，释放内存
             return True
         except Exception as e:
-            logging.error(f"保存图表失败: {e}")
+            logger.error(f"保存图表失败: {e}")
             return False
     
     def run_analysis(self, save_path=None):
@@ -393,7 +397,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             try:
                 self.plot_vol_price_chart(save_path)
             except Exception as e:
-                logging.error(f"绘制图表失败: {e}")
+                logger.error(f"绘制图表失败: {e}")
                 analysis_result['chart_error'] = str(e)
         
         # 保存分析结果

@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 from datetime import datetime
+import re
 
 # 导入日志
 from utils.logger import setup_logger
@@ -36,7 +37,7 @@ def parse_args():
     analyze_parser = subparsers.add_parser('analyze', help='股票分析功能')
     analyze_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'deepseek'], 
                                default='volprice', nargs='?', help='分析器类型')
-    analyze_parser.add_argument('stock_code', help='股票代码')
+    analyze_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
     analyze_parser.add_argument('--days', type=int, help='回溯数据天数')
     analyze_parser.add_argument('--end-date', help='结束日期，格式：YYYY-MM-DD')
     analyze_parser.add_argument('--save-chart', action='store_true', default=True, help='保存图表')
@@ -51,6 +52,12 @@ def parse_args():
     
     # 解析命令行参数
     args = parser.parse_args()
+    
+    # 检查是否缺少必要的参数
+    if args.command == 'analyze':
+        # 如果参数不足2个，可能是没有提供股票代码
+        if len(sys.argv) < 4:
+            analyze_parser.error("analyze命令需要提供分析器类型和股票代码两个参数")
     
     return args
 
@@ -106,6 +113,18 @@ def handle_analyze(args):
     analyzer_type = args.analyzer_type
     stock_code = args.stock_code
     
+    # 验证股票代码格式
+    valid_code = False
+    # 验证是否为6位数字，或者以特定规则开头的代码
+    if re.match(r'^\d{6}$', stock_code) or \
+       re.match(r'^(sh|sz|bj|SH|SZ|BJ)\d{6}$', stock_code) or \
+       re.match(r'^(00|60|30|68|83|82|43|16|84|87|88|89|90|98|99)\d{4}$', stock_code):
+        valid_code = True
+    
+    if not valid_code:
+        logger.error(f"股票代码格式无效: {stock_code}，正确格式应为6位数字，如'000001'或'600001'")
+        return
+    
     logger.info(f"开始执行{analyzer_type}分析，股票代码: {stock_code}...")
     
     try:
@@ -147,7 +166,7 @@ def handle_analyze(args):
         else:
             output_file = f"{stock_code}_{analyzer_type}_{datetime.now().strftime('%Y%m%d')}"
         # 执行分析
-        result = analyzer.run_analysis(output_file)
+        result = analyzer.run_analysis(save_path=output_file)
         
         if result:
             # 输出图表路径

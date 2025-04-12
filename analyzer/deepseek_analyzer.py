@@ -3,18 +3,21 @@
 
 import os
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import jieba
 from collections import Counter
 from wordcloud import WordCloud
+import json
+from typing import Union
 
 from analyzer.base_analyzer import BaseAnalyzer
 from utils.indicators import plot_stock_chart, calculate_technical_indicators
 from utils.logger import get_logger
-from utils.akshare_api import get_financial_reports
+from utils.akshare_api import AkshareAPI
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
 plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -26,123 +29,90 @@ logger = get_logger(__name__)
 class DeepseekAnalyzer(BaseAnalyzer):
     """深度学习分析器类，用于使用大语言模型进行股票综合分析"""
     
-    def __init__(self, stock_code, stock_name=None, end_date=None, days=365, ai_type="gemini", save_path="./datas/analysis"):
+    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
+                 days: int = 365, ai_type: str = "deepseek"):
         """
-        初始化深度学习分析器
+        初始化DeepSeek分析器
         
         参数:
             stock_code (str): 股票代码
             stock_name (str, 可选): 股票名称，如不提供则通过基类获取
             end_date (str 或 datetime, 可选): 结束日期，默认为当前日期
             days (int, 可选): 回溯天数，默认365天
-            ai_type (str, 可选): 分析模型类型，默认"deepseek"
-            save_path (str, 可选): 图片和报告保存路径，默认当前目录
+            ai_type (str, 可选): AI模型类型，如 "deepseek", "gemini" 等
         """
         super().__init__(stock_code, stock_name, end_date, days)
         self.ai_type = ai_type
-        self.save_path = save_path
-        self.news_data = None
+        
+        # 初始化各类数据属性
         self.financial_data = None
+        self.news_data = None
+        self.indicators = {}
+        self.tech_summary = {}
+        self.financial_summary = {}
+        self.news_summary = {}
         self.analysis_report = ""
         
-        # 创建保存目录(如果不存在)
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
-        
-        # 尝试导入LLM和搜索API
+        # 设置字体
         try:
-            from src.utils.llm_api import LLMAPI
-            from src.utils.tavily_api import TavilyAPI
-            self.llm = LLMAPI()
-            self.tavily_api = TavilyAPI()
-            self.api_available = True
-        except ImportError:
-            logger.warning("未找到LLM或Tavily API模块，将无法进行AI分析和网络搜索")
-            self.api_available = False
+            self.font_path = fm.findfont(fm.FontProperties(family='SimHei'))
+            plt.rcParams['font.sans-serif'] = ['SimHei']
+            plt.rcParams['axes.unicode_minus'] = False
+        except Exception as e:
+            logger.warning(f"设置中文字体失败: {str(e)}，将使用系统默认字体")
+            self.font_path = None
     
     def fetch_data(self) -> bool:
-        """
-        获取股票数据
-        
-        返回:
-            bool: 是否成功获取数据
-        """
-        logger.info(f"正在获取 {self.stock_name} ({self.stock_code}) 的日线数据...")
-        
+        """获取股票数据"""
         try:
-            # 从数据库获取股票日线数据
+            # 从AkShare获取股票日线数据
             self.daily_data = self.get_stock_daily_data()
             
             if self.daily_data.empty:
-                logger.warning(f"未能从数据库获取到股票 {self.stock_code} 的数据")
+                logger.warning(f"未能获取到股票 {self.stock_code} 的数据")
                 return False
-            else:
-                logger.info(f"成功获取 {self.stock_code} 的 {len(self.daily_data)} 条数据记录")
-                return True
             
+            logger.info(f"成功获取 {self.stock_code} 的 {len(self.daily_data)} 条数据记录")
+            return True
         except Exception as e:
             logger.error(f"获取股票数据时出错: {str(e)}")
             return False
     
     def fetch_financial_data(self) -> bool:
         """获取财务报表数据"""
-        if not self.api_available:
-            logger.warning("API模块不可用，无法获取财务数据")
-            return False
-            
         try:
-            # 使用get_stock_finance_indicator方法获取财务数据
-            self.financial_data = get_financial_reports(
-                limit=4,  # 获取最近4个季度的数据
-                report_type="季度报告"  # 可选:"季度报告", "半年报", "年度报告"
+            akshare = AkshareAPI()
+            self.financial_data = akshare.get_financial_reports(
+                stock_code=self.stock_code,
+                start_year=str(datetime.now().year - 1)
             )
             
-            if self.financial_data is not None and not self.financial_data.empty:
+            if self.financial_data is not None and not (isinstance(self.financial_data, pd.DataFrame) and self.financial_data.empty):
                 logger.info(f"成功获取 {self.stock_code} 的财务数据")
                 return True
-            else:
-                logger.warning(f"未获取到 {self.stock_code} 的财务数据")
-                return False
+            logger.warning(f"未获取到 {self.stock_code} 的财务数据")
+            return False
         except Exception as e:
             logger.error(f"获取财务数据失败: {e}")
             return False
     
     def fetch_news_sentiment(self, days=30) -> bool:
-        """使用Tavily获取新闻舆情数据"""
-        if not self.api_available:
-            logger.warning("API模块不可用，无法获取新闻舆情数据")
+        """获取新闻舆情数据"""
+        try:
+            akshare = AkshareAPI()
+            self.news_data = akshare.get_news_sentiment(
+                stock_code=self.stock_code,
+                stock_name=self.stock_name,
+                days=days
+            )
+            
+            if self.news_data is not None and not self.news_data.empty:
+                logger.info(f"成功获取 {self.stock_code} 的新闻舆情数据")
+                return True
+            logger.warning(f"未获取到 {self.stock_code} 的新闻舆情数据")
             return False
-            
-        try:    
-            # 确保股票名称已获取
-            if not self.stock_name:
-                self.get_stock_name()
-                
-            if not self.stock_name:
-                raise ValueError("未能获取股票名称")
-            
-            logger.info(f"正在搜索{self.stock_name}的相关新闻...")
-            
-            # 创建查询参数
-            query = f"{self.stock_code} {self.stock_name} 股票"
-            payload = {
-                "query": query,
-                "search_depth": "basic",  
-                "max_results": 10, 
-                "include_domains": ["eastmoney.com", "sina.com.cn", "10jqka.com.cn"]
-            }
-            
-            # 获取数据
-            response = self.tavily_api.search_base_news(payload)
-            if response:
-                # 处理Tavily返回的新闻数据
-                self.news_data = self.tavily_api.process_tavily_response(response)
-                return True   
-            else:
-                logger.warning("未获取到新闻舆情数据")
-                return False
         except Exception as e:
-            logger.error(f"获取新闻舆情失败: {e}")
+            logger.error(f"获取新闻舆情数据失败: {e}")
             return False
     
     def generate_technical_summary(self) -> dict:
@@ -151,114 +121,28 @@ class DeepseekAnalyzer(BaseAnalyzer):
             logger.warning("没有可用的技术指标数据，无法生成摘要")
             return None
         
-        # 获取最近数据
-        recent_data = self.daily_data.iloc[-1]
-        prev_data = self.daily_data.iloc[-2] if len(self.daily_data) > 1 else None
-        
-        # 计算当日变化
-        price_change = 0
-        price_change_pct = 0
-        if prev_data is not None:
-            price_change = recent_data['close'] - prev_data['close']
-            price_change_pct = price_change / prev_data['close'] * 100
-        
-        # 判断趋势
-        short_trend = "上涨" if recent_data['close'] > recent_data['MA5'] else "下跌"
-        medium_trend = "上涨" if recent_data['close'] > recent_data['MA20'] else "下跌"
-        long_trend = "上涨" if recent_data['close'] > recent_data['MA60'] else "下跌"
-        
-        # MACD信号
-        macd_signal = "看多" if recent_data['MACD_DIF'] > recent_data['MACD_DEA'] else "看空"
-        
-        # RSI状态
-        rsi_value = recent_data['RSI_14']
-        if rsi_value > 70:
-            rsi_status = "超买"
-        elif rsi_value < 30:
-            rsi_status = "超卖"
-        else:
-            rsi_status = "中性"
-        
-        # 生成摘要
-        summary = {
-            '股票代码': self.stock_code,
-            '股票名称': self.stock_name,
-            '最新收盘价': round(recent_data['close'], 2),
-            '价格变化': f"{round(price_change, 2)}({round(price_change_pct, 2)}%)",
-            '短期趋势': short_trend,
-            '中期趋势': medium_trend,
-            '长期趋势': long_trend,
-            'MACD信号': macd_signal,
-            'RSI状态': f"{rsi_status}({round(rsi_value, 2)})"
-        }
-        
-        return summary
+        akshare = AkshareAPI()
+        return akshare.generate_technical_summary(self.daily_data, self.indicators)
     
     def generate_financial_summary(self) -> str:
         """生成财务分析摘要"""
         if self.financial_data is None or self.financial_data.empty:
             return None
         
-        try:
-            # 获取最新财务数据
-            latest_data = self.financial_data.iloc[0]
-            
-            # 计算关键指标
-            eps = latest_data.get('基本每股收益(元)', 0)
-            roe = latest_data.get('净资产收益率(%)', 0)
-            debt_ratio = latest_data.get('资产负债率(%)', 0)
-            gross_margin = latest_data.get('毛利率(%)', 0)
-            net_margin = latest_data.get('净利率(%)', 0)
-            revenue_growth = latest_data.get('营业收入同比增长(%)', 0)
-            profit_growth = latest_data.get('净利润同比增长(%)', 0)
-            
-            # 获取报告期
-            report_date = latest_data.get('报告期', '未知')
-            
-            # 生成财务摘要文本
-            summary = (
-                f"报告期：{report_date}\n"
-                f"每股收益：{eps}元\n"
-                f"净资产收益率：{roe}%\n"
-                f"资产负债率：{debt_ratio}%\n"
-                f"毛利率：{gross_margin}%\n"
-                f"净利率：{net_margin}%\n"
-                f"营收同比增长：{revenue_growth}%\n"
-                f"净利润同比增长：{profit_growth}%"
-            )
-            
-            return summary
-        except Exception as e:
-            logger.error(f"生成财务摘要时出错: {e}")
-            return "财务数据处理出错"
+        akshare = AkshareAPI()
+        return akshare.generate_financial_summary(
+            stock_code=self.stock_code,
+            stock_name=self.stock_name,
+            financial_reports=self.financial_data
+        )
     
     def generate_news_summary(self) -> dict:
         """生成新闻舆情摘要"""
         if self.news_data is None or self.news_data.empty:
             return None
-            
-        try:
-            # 情感分析
-            avg_sentiment = self.news_data['sentiment'].mean()
-            sentiment_status = "积极" if avg_sentiment > 0.2 else "消极" if avg_sentiment < -0.2 else "中性"
-            
-            # 词频分析
-            text = ' '.join(self.news_data['title'].tolist())
-            words = [word for word in jieba.cut(text) if len(word) > 1 and word not in ['股票', '公司']]
-            word_freq = Counter(words).most_common(5)
-            
-            summary = {
-                '新闻数量': len(self.news_data),
-                '平均情感得分': round(avg_sentiment, 2),
-                '舆情倾向': sentiment_status,
-                '近期热点话题': [word[0] for word in word_freq],
-                '最新新闻标题': self.news_data.iloc[0]['title']
-            }
-            
-            return summary
-        except Exception as e:
-            logger.error(f"生成新闻摘要时出错: {e}")
-            return None
+        
+        akshare = AkshareAPI()
+        return akshare.generate_news_summary(self.news_data)
     
     def plot_analysis_charts(self, save_filename=None) -> bool:
         """绘制分析图表"""
@@ -268,17 +152,15 @@ class DeepseekAnalyzer(BaseAnalyzer):
 
         if save_filename is None:
             save_filename = f"{self.stock_code}_技术分析_{self.end_date.strftime('%Y%m%d')}.png"
-        save_path = os.path.join(self.save_path, self.stock_code, save_filename)
         
-        # 使用通用绘图函数
+        save_path = os.path.join(self.save_path, save_filename)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        
         try:
-            # 选择最近60个交易日的数据
             plot_days = min(60, len(self.daily_data))
             plot_df = self.daily_data.iloc[-plot_days:].copy()
-            
             title = f'{self.stock_name}({self.stock_code}) 技术分析'
             
-            # 调用通用绘图函数
             fig, axes = plot_stock_chart(
                 plot_df, 
                 title=title, 
@@ -288,11 +170,8 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 plot_boll=True
             )
             
-            # 更新分析结果中的图表路径
             if 'analysis_result' in self.__dict__ and isinstance(self.analysis_result, dict):
-                self.analysis_result.update({
-                    'chart_path': save_path
-                })
+                self.analysis_result.update({'chart_path': save_path})
             
             logger.info(f"技术分析图表已保存至: {save_path}")
             return True
@@ -305,17 +184,19 @@ class DeepseekAnalyzer(BaseAnalyzer):
         if self.news_data is None or self.news_data.empty:
             logger.warning("没有可用的新闻数据，无法生成词云")
             return False
-            
+        
         if save_filename is None:
             save_filename = f"{self.stock_code}_词云_{self.end_date.strftime('%Y%m%d')}.png"
-        save_path = os.path.join(self.save_path, self.stock_code, save_filename)
+        
+        save_path = os.path.join(self.save_path, save_filename)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
         try:
             text = ' '.join(self.news_data['title'].tolist())
             words = ' '.join([word for word in jieba.cut(text) if len(word) > 1 and word not in ['股票', '公司']])
             
             wc = WordCloud(
-                font_path=font_path,
+                font_path=self.font_path,
                 width=800,
                 height=600,
                 background_color='white',
@@ -336,11 +217,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
             return False
     
     def analyze_with_ai(self, additional_context=None) -> str:
-        """使用AI进行综合分析"""
-        if not self.api_available:
-            logger.warning("AI API不可用，无法进行AI分析")
-            return "AI分析模块未加载，无法生成AI分析报告"
-        
+        """使用AI模型进行综合分析"""
         try:
             technical_summary = self.generate_technical_summary()
             financial_summary = self.generate_financial_summary()
@@ -350,173 +227,189 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 logger.warning("缺少技术分析数据，无法进行AI分析")
                 return "缺少技术分析数据，无法生成AI分析报告"
             
-            logger.info("正在使用AI生成分析报告...")
+            logger.info("正在生成分析报告...")
             
-            # 准备提示词
-            prompt = f"""
-            你是一位专业的中国A股市场分析师，请对{technical_summary['股票名称']}({technical_summary['股票代码']})进行简要分析：
+            # 生成分析报告
+            report = self._generate_analysis_report(
+                technical_summary,
+                financial_summary,
+                news_summary,
+                additional_context
+            )
             
-            1. 股票信息：{technical_summary['股票名称']}({technical_summary['股票代码']})，最新价：{technical_summary['最新收盘价']}元
-            2. 技术面：短期趋势{technical_summary['短期趋势']}，中期趋势{technical_summary['中期趋势']}，
-               MACD信号：{technical_summary['MACD信号']}，RSI：{technical_summary['RSI状态']}
-            3. 财务：{financial_summary if financial_summary else "无财务数据"}
-            4. 新闻舆情：{self._format_news_summary(news_summary) if news_summary else "无新闻数据"}
-            {additional_context or ''}
+            # 存储报告
+            self.analysis_report = report.strip()
             
-            请分析：1.技术面评估 2.基本面简评 3.舆情分析 4.投资建议 5.风险提示
-            尽量简洁，总字数控制在1500字以内。
-            """
-            
-            # 根据指定模型类型调用不同的API
-            if self.ai_type == "gemini":
-                logger.info(f"使用Gemini模型生成分析报告")
-                self.analysis_report = self.llm.generate_gemini_response(prompt)
-            else:  # 默认使用deepseek
-                logger.info(f"使用Deepseek模型生成分析报告")
-                self.analysis_report = self.llm.generate_deepseek_response(prompt)
-            
+            logger.info(f"成功生成 {self.stock_code} 的AI分析报告")
             return self.analysis_report
             
         except Exception as e:
-            logger.error(f"AI分析出错: {e}")
-            return f"AI分析过程中出错: {e}"
+            error_msg = f"AI分析出错: {e}"
+            logger.error(error_msg)
+            return error_msg
     
-    def _format_news_summary(self, summary) -> str:
-        """格式化新闻摘要"""
-        if not summary:
-            return "无新闻数据"
+    def _generate_analysis_report(self, tech_summary, fin_summary, news_summary, additional_context) -> str:
+        """生成分析报告"""
+        report_parts = []
         
-        formatted = (
-            f"近期新闻{summary['新闻数量']}条，"
-            f"平均情感得分:{summary['平均情感得分']}({summary['舆情倾向']})，"
-            f"热点话题:{','.join(summary['近期热点话题'][:3]) if '近期热点话题' in summary else '无'}，"
-            f"最新标题:{summary['最新新闻标题'] if '最新新闻标题' in summary else '无'}"
-        )
-        return formatted
+        # 添加标题
+        report_parts.append(f"{self.stock_name}({self.stock_code})综合分析报告\n")
+        
+        # 技术分析部分
+        tech_analysis = f"""
+        技术面分析：
+        目前股价为{tech_summary.get('最新收盘价', '未知')}元，
+        短期趋势{tech_summary.get('短期趋势', '未知')}，中期趋势{tech_summary.get('中期趋势', '未知')}。
+        MACD指标显示{tech_summary.get('MACD信号', '未知')}，RSI指标为{tech_summary.get('RSI状态', '未知')}状态。
+        """
+        report_parts.append(tech_analysis)
+        
+        # 财务分析部分
+        finance_analysis = f"""
+        基本面分析：
+        {fin_summary if isinstance(fin_summary, str) else '无财务数据'}
+        """
+        report_parts.append(finance_analysis)
+        
+        # 新闻舆情分析部分
+        if news_summary:
+            sentiment = news_summary.get('舆情倾向', '未知')
+            news_count = news_summary.get('新闻数量', 0)
+            news_analysis = f"""
+            舆情分析：
+            近期共有{news_count}条相关新闻，整体舆情{sentiment}。
+            """
+            
+            if '近期热点话题' in news_summary:
+                hot_topics = '、'.join(news_summary['近期热点话题'][:3])
+                news_analysis += f"热点话题包括：{hot_topics}。"
+            report_parts.append(news_analysis)
+        else:
+            report_parts.append("舆情分析：无相关新闻数据。")
+        
+        # 综合建议
+        if '短期趋势' in tech_summary:
+            if tech_summary['短期趋势'] == '上涨' and (not news_summary or news_summary.get('舆情倾向') != '消极'):
+                recommendation = "综合建议：技术面向好，可考虑逢低买入，注意控制仓位。"
+            elif tech_summary['短期趋势'] == '下跌' or (news_summary and news_summary.get('舆情倾向') == '消极'):
+                recommendation = "综合建议：存在下行风险，建议观望或减仓。"
+            else:
+                recommendation = "综合建议：市场震荡，建议持币观望。"
+        else:
+            recommendation = "综合建议：数据不足，无法给出明确建议。"
+        report_parts.append(recommendation)
+        
+        # 风险提示
+        risk_warning = """
+        风险提示：
+        股市有风险，入市需谨慎。本分析仅供参考，不构成投资建议。
+        """
+        report_parts.append(risk_warning)
+        
+        # 添加额外上下文
+        if additional_context:
+            report_parts.append(f"\n额外分析：\n{additional_context}")
+        
+        return "\n".join(report_parts)
     
-    def save_analysis_report(self, file_name=None) -> str:
-        """保存完整分析报告到文件"""
-        if file_name is None:
-            file_name = f"{self.stock_code}_分析报告_{self.end_date.strftime('%Y%m%d')}.txt"
-        
-        file_path = os.path.join(self.save_path, self.stock_code, file_name)
-        
+    def save_analysis_report(self, filename=None) -> str:
+        """保存分析报告到文件"""
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(f"{'='*40}\n")
-                f.write(f"{self.stock_name}({self.stock_code}) 综合分析报告\n")
-                f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"{'='*40}\n\n")
+            if filename is None:
+                filename = f"{self.stock_code}_分析报告_{self.end_date.strftime('%Y%m%d')}.txt"
+            
+            save_path = os.path.join(self.save_path, filename)
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(f"{'='*50}\n")
+                f.write(f"{self.stock_name}({self.stock_code}) AI分析报告\n")
+                f.write(f"分析日期: {self.end_date.strftime('%Y-%m-%d')}\n")
+                f.write(f"{'='*50}\n\n")
                 
-                # 技术分析摘要
-                tech_summary = self.generate_technical_summary()
-                if tech_summary:
-                    f.write("【技术分析摘要】\n")
-                    for key, value in tech_summary.items():
-                        if key not in ['股票代码', '股票名称']:
-                            f.write(f"{key}: {value}\n")
-                    f.write("\n")
+                f.write("【技术分析】\n")
+                f.write(f"{self.tech_summary}\n\n")
                 
-                # 财务分析摘要
-                if self.financial_data is not None:
-                    fin_summary = self.generate_financial_summary()
-                    f.write("【财务分析摘要】\n")
-                    if fin_summary:
-                        f.write(fin_summary)
-                    else:
-                        f.write("无财务数据")
-                    f.write("\n\n")
+                if self.financial_summary:
+                    f.write("【财务分析】\n")
+                    f.write(f"{self.financial_summary}\n\n")
                 
-                # 新闻舆情摘要
-                if self.news_data is not None:
-                    news_summary = self.generate_news_summary()
-                    f.write("【新闻舆情摘要】\n")
-                    if news_summary:
-                        for key, value in news_summary.items():
-                            f.write(f"{key}: {value}\n")
-                    else:
-                        f.write("无新闻舆情数据")
-                    f.write("\n\n")
+                if self.news_summary:
+                    f.write("【新闻舆情】\n")
+                    f.write(f"{self.news_summary}\n\n")
                 
-                # AI分析报告
                 f.write("【AI综合分析】\n")
-                f.write(self.analysis_report if self.analysis_report else "未生成AI分析报告")
+                f.write(f"{self.analysis_report}\n\n")
+                
+                f.write("【技术指标数据】\n")
+                for name, value in self.indicators.items():
+                    if isinstance(value, (int, float)):
+                        f.write(f"{name}: {value:.4f}\n")
+                    else:
+                        f.write(f"{name}: {value}\n")
             
-            logger.info(f"完整分析报告已保存至 {file_path}")
-            return file_path
+            logger.info(f"分析报告已保存到 {save_path}")
+            return save_path
+            
         except Exception as e:
-            logger.error(f"保存分析报告失败: {e}")
-            return None
+            logger.error(f"保存分析报告时出错: {str(e)}")
+            return ""
     
-    def run_analysis(self, additional_context=None) -> dict:
-        """
-        运行完整分析流程
-        
-        参数:
-            additional_context (str, 可选): 额外的分析上下文信息
+    def run_analysis(self, save_path=None, additional_context=None) -> dict:
+        """运行完整的分析流程"""
+        try:
+            # 获取数据
+            if not self.fetch_data():
+                return {'status': 'error', 'message': '获取股票数据失败'}
             
-        返回:
-            dict: 分析结果
-        """
-        # 初始化分析结果
-        self.analysis_result = {
-            'status': 'error',
-            'stock_code': self.stock_code,
-            'stock_name': self.stock_name,
-            'date': self.end_date.strftime('%Y-%m-%d'),
-            'message': '分析未完成'
-        }
-        
-        # 获取数据
-        if not self.fetch_data():
-            self.analysis_result.update({
-                'message': '获取数据失败'
-            })
-            return self.analysis_result
-        
-        # 准备技术指标
-        if not self.prepare_data():
-            self.analysis_result.update({
-                'message': '准备数据失败'
-            })
-            return self.analysis_result
-        
-        # 获取财务数据(可选)
-        fin_success = self.fetch_financial_data()
-        
-        # 获取新闻舆情(可选)
-        news_success = self.fetch_news_sentiment()
-        
-        # 创建数据目录
-        data_dir = os.path.join(self.save_path, self.stock_code)
-        os.makedirs(data_dir, exist_ok=True)
-        
-        # 绘制分析图表
-        chart_success = self.plot_analysis_charts(save_filename=f"{self.stock_code}_技术分析.png")
-        
-        # 生成新闻词云(如果有新闻数据)
-        if self.news_data is not None and not self.news_data.empty:
-            self.generate_word_cloud(save_filename=f"{self.stock_code}_词云.png")
-        
-        # 使用AI进行分析
-        ai_analysis = self.analyze_with_ai(additional_context)
-        
-        # 保存完整报告
-        report_path = self.save_analysis_report(f"{self.stock_code}_分析报告.txt")
-        
-        # 构建分析结果
-        self.analysis_result.update({
-            'status': 'success',
-            'technical_summary': self.generate_technical_summary(),
-            'financial_summary': self.generate_financial_summary() if fin_success else None,
-            'news_summary': self.generate_news_summary() if news_success else None,
-            'ai_analysis': ai_analysis,
-            'report_path': report_path,
-            'description': f"{self.stock_name}({self.stock_code})已完成AI综合分析"
-        })
-        
-        # 保存分析结果到数据库
-        self.save_analysis_result()
-        
-        logger.info("分析流程完成，结果已保存")
-        return self.analysis_result 
+            # 获取财务数据
+            self.fetch_financial_data()
+            
+            # 获取新闻舆情
+            self.fetch_news_sentiment()
+            
+            # 生成技术分析摘要
+            self.tech_summary = self.generate_technical_summary()
+            
+            # 绘制分析图表
+            chart_path = ""
+            if self.plot_analysis_charts():
+                chart_path = os.path.join(self.save_path, f"{self.stock_code}_技术分析_{self.end_date.strftime('%Y%m%d')}.png")
+            
+            # 生成词云图
+            wordcloud_path = ""
+            if self.news_data is not None and not self.news_data.empty:
+                if self.generate_word_cloud():
+                    wordcloud_path = os.path.join(self.save_path, f"{self.stock_code}_词云_{self.end_date.strftime('%Y%m%d')}.png")
+            
+            # 使用AI进行分析
+            analysis_report = self.analyze_with_ai(additional_context)
+            
+            # 保存分析报告
+            report_path = self.save_analysis_report()
+            
+            # 整合结果
+            result = {
+                'status': 'success',
+                'stock_code': self.stock_code,
+                'stock_name': self.stock_name,
+                'date': self.end_date.strftime('%Y-%m-%d'),
+                'technical_summary': self.tech_summary,
+                'financial_summary': self.financial_summary,
+                'news_summary': self.news_summary,
+                'chart_path': chart_path,
+                'wordcloud_path': wordcloud_path,
+                'report_path': report_path,
+                'analysis_report': analysis_report
+            }
+            
+            # 保存分析结果
+            self.analysis_result = result
+            
+            logger.info(f"{self.stock_code} ({self.stock_name}) 分析完成")
+            return result
+            
+        except Exception as e:
+            error_msg = f"运行分析流程时出错: {str(e)}"
+            logger.error(error_msg)
+            return {'status': 'error', 'message': error_msg} 

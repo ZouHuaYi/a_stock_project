@@ -31,6 +31,7 @@ class BaseAnalyzer:
         self.stock_code = stock_code
         self.stock_name = stock_name if stock_name else stock_code
         self.daily_data = pd.DataFrame()
+        self.save_path = PATH_CONFIG.get('analysis_path')
         
         # 处理end_date参数
         if end_date:
@@ -58,6 +59,10 @@ class BaseAnalyzer:
         # 初始化数据和结果属性
         self.data = pd.DataFrame()
         self.analysis_result = {}
+        
+        # 设置统一的保存路径
+        self.save_path = os.path.join("datas", "analysis")
+        os.makedirs(self.save_path, exist_ok=True)
     
     def get_stock_name(self) -> str:
         """
@@ -88,40 +93,45 @@ class BaseAnalyzer:
     
     def get_stock_daily_data(self) -> pd.DataFrame:
         """
-        从数据库获取股票日线数据，并计算技术指标
+        从AkShare获取股票日线数据，并计算技术指标
         
         返回:
             pd.DataFrame: 股票日线数据（含技术指标）
         """
         try:
-            from data.db_manager import DatabaseManager
+            from utils.akshare_api import AkshareAPI
             
-            db = DatabaseManager()
+            akshare = AkshareAPI()
             
-            # 构建SQL查询
-            sql = f"""
-                SELECT * FROM stock_daily
-                WHERE stock_code = '{self.stock_code}'
-                AND trade_date BETWEEN '{self.start_date.strftime('%Y-%m-%d')}' AND '{self.end_date.strftime('%Y-%m-%d')}'
-                ORDER BY trade_date
-            """
+            # 获取历史数据
+            years = self.days // 365 + 1  # 向上取整，确保获取足够的数据
             
-            # 执行查询
-            df = db.read_sql(sql)
+            df = akshare.get_stock_history(
+                stock_code=self.stock_code,
+                period="daily",
+                years=years,
+                adjust="qfq"  # 前复权
+            )
             
             if not df.empty:
-                logger.info(f"从数据库成功获取 {len(df)} 条 {self.stock_code} 数据")
+                # 按照回溯天数筛选
+                if 'trade_date' in df.columns:
+                    df = df[(df['trade_date'] >= self.start_date.strftime('%Y-%m-%d')) & 
+                           (df['trade_date'] <= self.end_date.strftime('%Y-%m-%d'))]
+                    df.set_index('trade_date', inplace=True)
+                
+                logger.info(f"成功获取 {len(df)} 条 {self.stock_code} 数据")
                 
                 # 使用工具函数计算技术指标
                 df = calculate_basic_indicators(df)
                 self.daily_data = df
                 return df
             else:
-                logger.warning(f"数据库中未找到股票 {self.stock_code} 的数据")
+                logger.warning(f"未找到股票 {self.stock_code} 的数据")
                 return pd.DataFrame()
                 
         except Exception as e:
-            logger.error(f"从数据库获取股票数据时出错: {str(e)}")
+            logger.error(f"从AkShare获取股票数据时出错: {str(e)}")
             return pd.DataFrame()
     
     def save_analysis_result(self, analysis_result: Dict = None) -> bool:
