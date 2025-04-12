@@ -2,12 +2,13 @@
 """股票技术指标计算工具模块"""
 
 import pandas as pd
+import pandas_ta as ta
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, List, Optional, Union, Any, Tuple
 
 def calculate_technical_indicators(df: pd.DataFrame, ma_periods: List[int] = [5, 10, 20, 30, 60], 
-                                 vol_periods: List[int] = [5, 10]) -> pd.DataFrame:
+                                 vol_periods: List[int] = [5, 10]) -> Tuple[pd.DataFrame, Dict]:
     """
     通用技术指标计算函数，计算常用的各种技术指标
     
@@ -23,15 +24,17 @@ def calculate_technical_indicators(df: pd.DataFrame, ma_periods: List[int] = [5,
         return df
     
     # 确保索引已按日期排序
-    df = df.sort_index()
+    # df = df.sort_index()
     
+    indicators = {}
     # 创建结果DataFrame的副本
     result_df = df.copy()
-    
     # 计算移动平均线
     for period in ma_periods:
         result_df[f'MA{period}'] = result_df['close'].rolling(window=period).mean()
-    
+        # 计算简单移动平均线
+        indicators[f'SMA_{period}'] = result_df.ta.sma(length=period, close='close')
+
     # 计算成交量均线
     for period in vol_periods:
         result_df[f'VOL_MA{period}'] = result_df['volume'].rolling(window=period).mean()
@@ -102,8 +105,30 @@ def calculate_technical_indicators(df: pd.DataFrame, ma_periods: List[int] = [5,
     
     # 计算振幅
     result_df['amplitude'] = (result_df['high'] - result_df['low']) / result_df['close'].shift(1) * 100
-    
-    return result_df
+
+    # 相对强弱指数(RSI)
+    indicators['RSI_6'] = result_df.ta.rsi(length=6, close='close')
+    indicators['RSI_12'] = result_df.ta.rsi(length=12, close='close')
+
+    # MACD
+    macd = result_df.ta.macd(fast=12, slow=26, signal=9, close='close')
+    indicators['MACD'] = macd['MACD_12_26_9']
+    indicators['MACD_signal'] = macd['MACDs_12_26_9']
+    indicators['MACD_hist'] = macd['MACDh_12_26_9']
+
+    # KDJ指标
+    stoch = result_df.ta.stoch(high='high', low='low', close='close', k=9, d=3, smooth_k=3)
+    indicators['KDJ_K'] = stoch['STOCHk_9_3_3']
+    indicators['KDJ_D'] = stoch['STOCHd_9_3_3']
+    indicators['KDJ_J'] = 3 * stoch['STOCHk_9_3_3'] - 2 * stoch['STOCHd_9_3_3']
+
+    # 布林带
+    bbands = result_df.ta.bbands(length=20, close='close')
+    indicators['BB_upper'] = bbands['BBU_20_2.0']
+    indicators['BB_middle'] = bbands['BBM_20_2.0']
+    indicators['BB_lower'] = bbands['BBL_20_2.0']
+
+    return result_df, indicators
 
 def calculate_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """

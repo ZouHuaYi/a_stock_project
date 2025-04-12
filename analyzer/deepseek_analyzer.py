@@ -33,7 +33,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
     def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
                  days: int = 365, ai_type: str = "deepseek"):
         """
-        初始化DeepSeek分析器
+        初始化AI分析器
         
         参数:
             stock_code (str): 股票代码
@@ -75,6 +75,13 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 return False
             
             logger.info(f"成功获取 {self.stock_code} 的 {len(self.daily_data)} 条数据记录")
+            # 计算技术指标
+            self.stock_name = self.get_stock_name()
+            if not self.stock_name:
+                logger.warning(f"未获取到 {self.stock_code} 的股票名称")
+            
+            self.daily_data['stock_name'] = self.stock_name
+            self.daily_data, self.indicators = calculate_technical_indicators(self.daily_data)
             return True
         except Exception as e:
             logger.error(f"获取股票数据时出错: {str(e)}")
@@ -88,7 +95,6 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 stock_code=self.stock_code,
                 start_year=str(datetime.now().year - 1)
             )
-            
             if self.financial_data is not None and not (isinstance(self.financial_data, pd.DataFrame) and self.financial_data.empty):
                 logger.info(f"成功获取 {self.stock_code} 的财务数据")
                 return True
@@ -101,13 +107,6 @@ class DeepseekAnalyzer(BaseAnalyzer):
     def fetch_news_sentiment(self, days=30) -> bool:
         """获取新闻舆情数据"""
         try:
-            # 确保股票名称已获取
-            if not self.stock_name:
-                self.stock_name = self.get_stock_name()
-                if not self.stock_name:
-                    logger.warning(f"未获取到 {self.stock_code} 的股票名称")
-                    return False
-
             logger.info(f"正在使用Tavily搜索{self.stock_name}的相关新闻...")
             
             # 创建查询参数
@@ -145,11 +144,12 @@ class DeepseekAnalyzer(BaseAnalyzer):
             return None
         
         akshare = AkshareAPI()
-        return akshare.generate_technical_summary(self.daily_data, self.indicators)
-    
+        summary = akshare.generate_technical_summary(self.daily_data, self.indicators)
+        return summary
+
     def generate_financial_summary(self) -> str:
         """生成财务分析摘要"""
-        if self.financial_data is None or self.financial_data.empty:
+        if self.financial_data is None:
             return None
         
         akshare = AkshareAPI()
@@ -194,7 +194,6 @@ class DeepseekAnalyzer(BaseAnalyzer):
         
         save_path = os.path.join(self.save_path, save_filename)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        
         try:
             plot_days = min(60, len(self.daily_data))
             plot_df = self.daily_data.iloc[-plot_days:].copy()
@@ -261,13 +260,11 @@ class DeepseekAnalyzer(BaseAnalyzer):
             technical_summary = self.generate_technical_summary()
             financial_summary = self.generate_financial_summary()
             news_summary = self.generate_news_summary()
-            
             if not technical_summary:
                 logger.warning("缺少技术分析数据，无法进行AI分析")
                 return "缺少技术分析数据，无法生成AI分析报告"
             
             logger.info("正在生成分析报告...")
-            
             # 生成分析报告
             report = self._generate_analysis_report(
                 technical_summary,
@@ -294,7 +291,6 @@ class DeepseekAnalyzer(BaseAnalyzer):
             return "无法生成分析报告：技术分析数据格式错误"
 
         report_parts = []
-        
         # 添加标题
         report_parts.append(f"{self.stock_name}({self.stock_code})综合分析报告\n")
         
@@ -404,10 +400,10 @@ class DeepseekAnalyzer(BaseAnalyzer):
             # 获取数据
             if not self.fetch_data():
                 return {'status': 'error', 'message': '获取股票数据失败'}
-            
+           
             # 获取财务数据
             self.fetch_financial_data()
-            
+           
             # 获取新闻舆情
             self.fetch_news_sentiment()
             

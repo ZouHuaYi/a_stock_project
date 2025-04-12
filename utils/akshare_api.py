@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """AkShare API接口封装"""
 
+import json
 import akshare as ak
 import pandas as pd
 import numpy as np
@@ -87,11 +88,9 @@ class AkshareAPI:
         
         try:
             # 通过 AkShare 获取股票名称
-            stock_list = ak.stock_zh_a_spot_em()
-            filtered = stock_list[stock_list['代码'] == stock_code]
-            
-            if not filtered.empty:
-                stock_name = filtered['名称'].iloc[0]
+            stock_info = ak.stock_individual_info_em(symbol=stock_code)
+            stock_name = stock_info.iloc[1, 1]
+            if stock_name:
                 logger.info(f"成功获取股票 {stock_code} 的名称: {stock_name}")
                 return stock_name
             else:
@@ -252,6 +251,8 @@ class AkshareAPI:
                 'low': 'Low', 
                 'close': 'Close', 
                 'volume': 'Volume',
+                'stock_code': '股票代码',
+                'stock_name': '股票名称',
                 '开盘': 'Open', 
                 '最高': 'High', 
                 '最低': 'Low', 
@@ -351,10 +352,9 @@ class AkshareAPI:
             Dict: 技术分析摘要
         """
         summary = {}
-        
         try:
             # 获取最新数据
-            current_price = df['Close'].iloc[-1] if 'Close' in df.columns else None
+            current_price = df['close'].iloc[-1] if 'close' in df.columns else None
             
             if current_price is None:
                 logger.error("无法获取当前价格，无法生成技术分析摘要")
@@ -362,19 +362,14 @@ class AkshareAPI:
                 
             # 基本价格信息
             summary['当前价格'] = round(current_price, 2)
-            
-            # 如果有股票代码和名称，添加到摘要中
+           
             if 'stock_code' in df.columns or df.get('stock_code') is not None:
                 stock_code = df['stock_code'].iloc[0] if 'stock_code' in df.columns else df.get('stock_code')
                 summary['股票代码'] = stock_code
-                
-            if 'stock_name' in df.columns or df.get('stock_name') is not None:
-                stock_name = df['stock_name'].iloc[0] if 'stock_name' in df.columns else df.get('stock_name')
-                summary['股票名称'] = stock_name
-            
+
             # 价格变动
             if len(df) > 1:
-                prev_close = df['Close'].iloc[-2]
+                prev_close = df['close'].iloc[-2]
                 change = current_price - prev_close
                 change_percent = (change / prev_close) * 100
                 
@@ -483,13 +478,12 @@ class AkshareAPI:
             if not financial_reports or all(df.empty for df in financial_reports.values() if isinstance(df, pd.DataFrame)):
                 logger.warning(f"股票 {stock_code} 没有有效的财务数据")
                 return summary
-                
+            
             # 处理资产负债表
             if '资产负债表' in financial_reports and not financial_reports['资产负债表'].empty:
                 balance_sheet = financial_reports['资产负债表']
                 # 提取最新的资产负债表数据
                 latest_balance = balance_sheet.iloc[:, :2]  # 假设第一列是项目名，第二列是最新数据
-                
                 # 提取关键指标
                 balance_summary = {}
                 for index, row in latest_balance.iterrows():
@@ -498,7 +492,7 @@ class AkshareAPI:
                         balance_summary[item_name] = row.iloc[1]
                         
                 summary['资产负债'] = balance_summary
-            
+                
             # 处理利润表
             if '利润表' in financial_reports and not financial_reports['利润表'].empty:
                 income_statement = financial_reports['利润表']
@@ -533,7 +527,7 @@ class AkshareAPI:
             return summary
             
         except Exception as e:
-            logger.error(f"生成财务分析摘要时出错: {str(e)}")
+            logger.error(f"生成财务分析摘要时出错xxxx: {str(e)}")
             return summary
     
     def get_news_sentiment(self, stock_code: str, stock_name: str = None, days: int = 30) -> pd.DataFrame:

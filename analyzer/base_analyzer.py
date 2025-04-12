@@ -112,7 +112,7 @@ class BaseAnalyzer:
                 years=years,
                 adjust="qfq"  # 前复权
             )
-            
+            df.rename(columns={'股票代码': 'stock_code'}, inplace=True)
             if isinstance(df, pd.DataFrame) and not df.empty:
                 # 按照回溯天数筛选
                 if 'trade_date' in df.columns:
