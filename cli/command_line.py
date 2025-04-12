@@ -117,8 +117,8 @@ def handle_analyze(args):
     valid_code = False
     # 验证是否为6位数字，或者以特定规则开头的代码
     if re.match(r'^\d{6}$', stock_code) or \
-       re.match(r'^(sh|sz|bj|SH|SZ|BJ)\d{6}$', stock_code) or \
-       re.match(r'^(00|60|30|68|83|82|43|16|84|87|88|89|90|98|99)\d{4}$', stock_code):
+       re.match(r'^(sh|sz|SH|SZ)\d{6}$', stock_code) or \
+       re.match(r'^(00|60|30)\d{4}$', stock_code):
         valid_code = True
     
     if not valid_code:

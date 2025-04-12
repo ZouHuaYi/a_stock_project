@@ -16,6 +16,7 @@ class LLMAPI:
         """初始化LLM API工具"""
         self.GEMINI_API_KEY = API_CONFIG.get('gemini', {}).get('api_key', '')
         self.OPENAI_API_KEY = API_CONFIG.get('openai', {}).get('api_key', '')
+        self.AI_MODEL = API_CONFIG.get('openai', {}).get('model', '')
         self.BASE_URL = API_CONFIG.get('openai', {}).get('base_url', '')
 
     def generate_gemini_response(self, prompt: str) -> str:
@@ -59,7 +60,7 @@ class LLMAPI:
         try:
             client = OpenAI(api_key=self.OPENAI_API_KEY, base_url=self.BASE_URL)
             response = client.chat.completions.create(
-                model=self.OPENAI_MODEL,
+                model=self.AI_MODEL,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],

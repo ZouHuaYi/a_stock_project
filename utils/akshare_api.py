@@ -419,11 +419,13 @@ class AkshareAPI:
             if 'RSI_14' in indicators or 'RSI_12' in indicators:
                 rsi_key = 'RSI_14' if 'RSI_14' in indicators else 'RSI_12'
                 rsi = indicators[rsi_key].iloc[-1]
-                
+
                 if rsi > 70:
                     tech_signals.append(f"{rsi_key}超买({round(rsi, 2)})")
                 elif rsi < 30:
                     tech_signals.append(f"{rsi_key}超卖({round(rsi, 2)})")
+                else:
+                    tech_signals.append(f"{rsi_key}中位({round(rsi, 2)})")
             
             # 将信号添加到摘要中
             summary['技术信号'] = tech_signals

@@ -109,6 +109,7 @@ def calculate_technical_indicators(df: pd.DataFrame, ma_periods: List[int] = [5,
     # 相对强弱指数(RSI)
     indicators['RSI_6'] = result_df.ta.rsi(length=6, close='close')
     indicators['RSI_12'] = result_df.ta.rsi(length=12, close='close')
+    indicators['RSI_14'] = result_df.ta.rsi(length=14, close='close')
 
     # MACD
     macd = result_df.ta.macd(fast=12, slow=26, signal=9, close='close')

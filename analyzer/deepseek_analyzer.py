@@ -16,6 +16,7 @@ from typing import Union
 
 from analyzer.base_analyzer import BaseAnalyzer
 from utils.indicators import plot_stock_chart, calculate_technical_indicators
+from utils.llm_api import LLMAPI
 from utils.logger import get_logger
 from utils.akshare_api import AkshareAPI
 from utils.tavily_api import TavilyAPI
@@ -189,7 +190,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
             '近期热点话题': [word[0] for word in word_freq],
             '最新新闻标题': self.news_data.iloc[0]['title']
         }
-        
+        self.news_summary = summary
         return summary
     
     def plot_analysis_charts(self, save_filename=None) -> bool:
@@ -281,9 +282,26 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 news_summary,
                 additional_context
             )
+
+            prompt = f"""
+            你是一位专业的中国A股市场分析师，请对{self.stock_name}({self.stock_code}), 请根据以下数据生成一份关于{self.stock_name}({self.stock_code})的AI分析报告：
+
+            {report}
+
+            请分析：1.技术面评估 2.基本面简评 3.舆情分析 4.投资建议 5.风险提示
+            尽量简洁，总字数控制在1500字以内。
+            """
+            llm_api = LLMAPI()
+            # 使用AI模型进行分析
+            if self.ai_type == "deepseek":
+                analysis_report = llm_api.generate_openai_response(prompt)
+            elif self.ai_type == "gemini":
+                analysis_report = llm_api.generate_gemini_response(prompt)
+            else:
+                raise ValueError(f"不支持的AI模型类型: {self.ai_type}")
             
             # 存储报告
-            self.analysis_report = report.strip()
+            self.analysis_report = analysis_report.strip()
             
             logger.info(f"成功生成 {self.stock_code} 的AI分析报告")
             return self.analysis_report
@@ -302,13 +320,12 @@ class DeepseekAnalyzer(BaseAnalyzer):
         report_parts = []
         # 添加标题
         report_parts.append(f"{self.stock_name}({self.stock_code})综合分析报告\n")
-        
         # 技术分析部分
         tech_analysis = f"""
         技术面分析：
-        目前股价为{tech_summary.get('最新收盘价', '未知')}元，
-        短期趋势{tech_summary.get('短期趋势', '未知')}，中期趋势{tech_summary.get('中期趋势', '未知')}。
-        MACD指标显示{tech_summary.get('MACD信号', '未知')}，RSI指标为{tech_summary.get('RSI状态', '未知')}状态。
+        目前股价为: {tech_summary.get('当前价格', '未知')}元，
+        技术信号: {tech_summary.get('技术信号', '未知')}，
+        整体研判: {tech_summary.get('整体研判', '未知')}。
         """
         report_parts.append(tech_analysis)
         
@@ -372,25 +389,16 @@ class DeepseekAnalyzer(BaseAnalyzer):
         else:
             report_parts.append("舆情分析：无相关新闻数据。")
         
-        # 综合建议
-        if isinstance(tech_summary, dict) and '短期趋势' in tech_summary:
-            if tech_summary['短期趋势'] == '上涨' and (not news_summary or news_summary.get('舆情倾向') != '消极'):
-                recommendation = "综合建议：技术面向好，可考虑逢低买入，注意控制仓位。"
-            elif tech_summary['短期趋势'] == '下跌' or (news_summary and news_summary.get('舆情倾向') == '消极'):
-                recommendation = "综合建议：存在下行风险，建议观望或减仓。"
+        report_parts.append("\n 技术指标数据：\n")
+        # 技术指标数据
+        for name, value in self.indicators.items():
+            if isinstance(value, pd.Series):
+                value = value.iloc[-5:]
+            elif isinstance(value, pd.DataFrame):
+                value = value.iloc[-5:]
             else:
-                recommendation = "综合建议：市场震荡，建议持币观望。"
-        else:
-            recommendation = "综合建议：数据不足，无法给出明确建议。"
-        report_parts.append(recommendation)
-        
-        # 风险提示
-        risk_warning = """
-        风险提示：
-        股市有风险，入市需谨慎。本分析仅供参考，不构成投资建议。
-        """
-        report_parts.append(risk_warning)
-        
+                value = value
+            report_parts.append(f"{name}: {value}")
         # 添加额外上下文
         if additional_context:
             report_parts.append(f"\n额外分析：\n{additional_context}")
@@ -426,13 +434,6 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 f.write("【AI综合分析】\n")
                 f.write(f"{self.analysis_report}\n\n")
                 
-                f.write("【技术指标数据】\n")
-                for name, value in self.indicators.items():
-                    if isinstance(value, (int, float)):
-                        f.write(f"{name}: {value:.4f}\n")
-                    else:
-                        f.write(f"{name}: {value}\n")
-            
             logger.info(f"分析报告已保存到 {save_path}")
             return save_path
             
