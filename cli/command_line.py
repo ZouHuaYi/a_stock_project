@@ -41,6 +41,7 @@ def parse_args():
     analyze_parser.add_argument('--end-date', help='结束日期，格式：YYYY-MM-DD')
     analyze_parser.add_argument('--save-chart', action='store_true', default=True, help='保存图表')
     analyze_parser.add_argument('--output', help='输出文件名(不含扩展名)')
+    analyze_parser.add_argument('--ai-type', choices=['gemini', 'deepseek'], help='AI类型')
     
     # 更新数据子命令
     update_parser = subparsers.add_parser('update', help='更新股票数据')
@@ -125,37 +126,32 @@ def handle_analyze(args):
             )
         elif analyzer_type == 'deepseek':
             from analyzer.deepseek_analyzer import DeepseekAnalyzer
+            if args.ai_type:
+                ai_type = args.ai_type
+            else:
+                ai_type = "gemini"
+
             analyzer = DeepseekAnalyzer(
                 stock_code=stock_code, 
                 end_date=args.end_date, 
-                days=args.days
+                days=args.days,
+                ai_type=ai_type
             )
         else:
             logger.error(f"未知的分析器类型: {analyzer_type}")
             return
         
+        # 保存分析结果
+        if args.output:
+            output_file = args.output
+        else:
+            output_file = f"{stock_code}_{analyzer_type}_{datetime.now().strftime('%Y%m%d')}"
         # 执行分析
-        result = analyzer.run_analysis()
+        result = analyzer.run_analysis(output_file)
         
         if result:
-            # 打印分析结果
-            if 'description' in result:
-                print("\n" + result['description'])
-                
             # 输出图表路径
-            if 'chart_path' in result:
-                print(f"\n图表已保存至: {result['chart_path']}")
-                
-            # 保存分析结果
-            if args.output:
-                output_file = args.output
-            else:
-                output_file = f"{stock_code}_{analyzer_type}_{datetime.now().strftime('%Y%m%d')}"
-                
-            # 保存结果
-            output_path = analyzer.save_results(output_file)
-            if output_path:
-                print(f"\n分析结果已保存至: {output_path}")
+            logger.info(f"图表已保存至: {output_file}")
         else:
             logger.error("分析失败，未返回结果")
     except Exception as e:

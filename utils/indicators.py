@@ -3,14 +3,18 @@
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Union, Any
+import matplotlib.pyplot as plt
+from typing import Dict, List, Optional, Union, Any, Tuple
 
-def calculate_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
+def calculate_technical_indicators(df: pd.DataFrame, ma_periods: List[int] = [5, 10, 20, 30, 60], 
+                                 vol_periods: List[int] = [5, 10]) -> pd.DataFrame:
     """
-    计算基本技术指标，包括移动平均线、成交量均线等
+    通用技术指标计算函数，计算常用的各种技术指标
     
     参数:
         df (pd.DataFrame): 原始股票数据，需要包含'open', 'high', 'low', 'close', 'volume'列
+        ma_periods (List[int]): 移动平均线周期列表
+        vol_periods (List[int]): 成交量移动平均线周期列表
         
     返回:
         pd.DataFrame: 增加了计算指标的DataFrame
@@ -25,15 +29,12 @@ def calculate_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
     result_df = df.copy()
     
     # 计算移动平均线
-    result_df['MA5'] = result_df['close'].rolling(window=5).mean()
-    result_df['MA10'] = result_df['close'].rolling(window=10).mean()
-    result_df['MA20'] = result_df['close'].rolling(window=20).mean()
-    result_df['MA30'] = result_df['close'].rolling(window=30).mean()
-    result_df['MA60'] = result_df['close'].rolling(window=60).mean()
+    for period in ma_periods:
+        result_df[f'MA{period}'] = result_df['close'].rolling(window=period).mean()
     
     # 计算成交量均线
-    result_df['VOL_MA5'] = result_df['volume'].rolling(window=5).mean()
-    result_df['VOL_MA10'] = result_df['volume'].rolling(window=10).mean()
+    for period in vol_periods:
+        result_df[f'VOL_MA{period}'] = result_df['volume'].rolling(window=period).mean()
     
     # 计算指数移动平均线
     result_df['EMA12'] = result_df['close'].ewm(span=12, adjust=False).mean()
@@ -44,22 +45,34 @@ def calculate_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
     result_df['MACD_DEA'] = result_df['MACD_DIF'].ewm(span=9, adjust=False).mean()
     result_df['MACD_BAR'] = 2 * (result_df['MACD_DIF'] - result_df['MACD_DEA'])
     
-    # 计算KDJ指标
+    # 计算KDJ指标 - 使用浮点类型初始化
+    result_df['KDJ_K'] = 50.0
+    result_df['KDJ_D'] = 50.0
+    result_df['KDJ_J'] = 50.0
+    
+    # 计算9日内的最低价和最高价
     low_9 = result_df['low'].rolling(window=9).min()
     high_9 = result_df['high'].rolling(window=9).max()
-    result_df['KDJ_K'] = 50
-    result_df['KDJ_D'] = 50
-    result_df['KDJ_J'] = 50
     
+    # 计算KDJ指标，使用loc避免链式赋值警告
     for i in range(9, len(result_df)):
         # 计算RSV
-        rsv = 100 * (result_df['close'].iloc[i] - low_9.iloc[i]) / (high_9.iloc[i] - low_9.iloc[i]) if high_9.iloc[i] != low_9.iloc[i] else 50
+        idx = result_df.index[i]
+        prev_idx = result_df.index[i-1]
+        
+        if high_9.iloc[i] != low_9.iloc[i]:
+            rsv = 100 * (result_df.loc[idx, 'close'] - low_9.iloc[i]) / (high_9.iloc[i] - low_9.iloc[i])
+        else:
+            rsv = 50.0
+            
         # 计算K值
-        result_df['KDJ_K'].iloc[i] = 2/3 * result_df['KDJ_K'].iloc[i-1] + 1/3 * rsv
+        result_df.loc[idx, 'KDJ_K'] = 2/3 * result_df.loc[prev_idx, 'KDJ_K'] + 1/3 * rsv
+        
         # 计算D值
-        result_df['KDJ_D'].iloc[i] = 2/3 * result_df['KDJ_D'].iloc[i-1] + 1/3 * result_df['KDJ_K'].iloc[i]
+        result_df.loc[idx, 'KDJ_D'] = 2/3 * result_df.loc[prev_idx, 'KDJ_D'] + 1/3 * result_df.loc[idx, 'KDJ_K']
+        
         # 计算J值
-        result_df['KDJ_J'].iloc[i] = 3 * result_df['KDJ_K'].iloc[i] - 2 * result_df['KDJ_D'].iloc[i]
+        result_df.loc[idx, 'KDJ_J'] = 3 * result_df.loc[idx, 'KDJ_K'] - 2 * result_df.loc[idx, 'KDJ_D']
     
     # 计算RSI指标
     delta = result_df['close'].diff()
@@ -92,12 +105,26 @@ def calculate_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     return result_df
 
-def calculate_fibonacci_levels(df: pd.DataFrame) -> Dict[str, float]:
+def calculate_basic_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    计算基本技术指标，包括移动平均线、成交量均线等
+    
+    参数:
+        df (pd.DataFrame): 原始股票数据，需要包含'open', 'high', 'low', 'close', 'volume'列
+        
+    返回:
+        pd.DataFrame: 增加了计算指标的DataFrame
+    """
+    # 调用通用计算函数实现
+    return calculate_technical_indicators(df)
+
+def calculate_fibonacci_levels(df: pd.DataFrame, use_swing: bool = False) -> Dict[str, float]:
     """
     计算斐波那契回调水平
     
     参数:
         df (pd.DataFrame): 股票数据，需要包含'high'和'low'列
+        use_swing (bool): 是否使用波段高低点而不是简单的最高最低点
         
     返回:
         Dict[str, float]: 计算出的各级别斐波那契回调水平
@@ -105,9 +132,26 @@ def calculate_fibonacci_levels(df: pd.DataFrame) -> Dict[str, float]:
     if df.empty:
         return {}
     
-    # 找出区间内的最高点和最低点
-    lowest_price = df['low'].min()
-    highest_price = df['high'].max()
+    if use_swing:
+        # 找到波段高低点（简单实现，可以进一步优化）
+        # 此处算法可根据实际需求复杂化
+        low_idx = df['low'].idxmin()
+        # 确保高点在低点之后
+        if low_idx == df.index[-1]:
+            # 如果低点是最后一个点，则取之前的最低点
+            low_idx = df.iloc[:-1]['low'].idxmin()
+        
+        # 只在低点之后找高点
+        high_df = df.loc[low_idx:]
+        high_idx = high_df['high'].idxmax()
+        
+        lowest_price = df.loc[low_idx, 'low']
+        highest_price = df.loc[high_idx, 'high']
+    else:
+        # 简单地找出区间内的最高点和最低点
+        lowest_price = df['low'].min()
+        highest_price = df['high'].max()
+    
     price_diff = highest_price - lowest_price
     
     if price_diff <= 0:
@@ -254,4 +298,120 @@ def calculate_support_resistance(df: pd.DataFrame, period: int = 20) -> Dict[str
     supports = sorted(list(set(supports)))
     resistances = sorted(list(set(resistances)))
     
-    return {'support': supports, 'resistance': resistances} 
+    return {'support': supports, 'resistance': resistances}
+
+def plot_stock_chart(df: pd.DataFrame, title: str = None, save_path: str = None, 
+                   plot_ma: bool = True, plot_volume: bool = True, 
+                   plot_boll: bool = False, plot_fib: Dict = None) -> Tuple[plt.Figure, List[plt.Axes]]:
+    """
+    通用股票图表绘制函数
+    
+    参数:
+        df (pd.DataFrame): 股票数据，需要包含OHLC和技术指标
+        title (str): 图表标题
+        save_path (str): 保存路径
+        plot_ma (bool): 是否绘制移动平均线
+        plot_volume (bool): 是否绘制成交量
+        plot_boll (bool): 是否绘制布林带
+        plot_fib (Dict): 斐波那契回调级别字典
+        
+    返回:
+        Tuple[plt.Figure, List[plt.Axes]]: 图表对象和轴对象列表
+    """
+    if df.empty:
+        return None, []
+    
+    # 设置中文字体
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+    
+    # 创建图表
+    fig = plt.figure(figsize=(16, 10))
+    
+    if plot_volume:
+        gs = plt.GridSpec(4, 1, height_ratios=[3, 1, 1, 1])
+        ax1 = plt.subplot(gs[0])
+        ax2 = plt.subplot(gs[1])
+        axes = [ax1, ax2]
+    else:
+        gs = plt.GridSpec(1, 1)
+        ax1 = plt.subplot(gs[0])
+        axes = [ax1]
+    
+    # 绘制K线图
+    dates = df.index
+    
+    # 设置标题
+    if title:
+        fig.suptitle(title, fontsize=16)
+    
+    # 绘制收盘价
+    ax1.plot(dates, df['close'], label='收盘价', color='black', linewidth=1.5)
+    
+    # 绘制移动平均线
+    if plot_ma:
+        if 'MA5' in df.columns:
+            ax1.plot(dates, df['MA5'], label='MA5', color='red', linewidth=1)
+        if 'MA10' in df.columns:
+            ax1.plot(dates, df['MA10'], label='MA10', color='blue', linewidth=1)
+        if 'MA20' in df.columns:
+            ax1.plot(dates, df['MA20'], label='MA20', color='green', linewidth=1)
+        if 'MA60' in df.columns:
+            ax1.plot(dates, df['MA60'], label='MA60', color='purple', linewidth=1)
+    
+    # 绘制布林带
+    if plot_boll and 'BOLL_MID' in df.columns:
+        ax1.plot(dates, df['BOLL_MID'], label='BOLL中轨', color='blue', linestyle='--', linewidth=1)
+        ax1.plot(dates, df['BOLL_UP'], label='BOLL上轨', color='red', linestyle='--', linewidth=1)
+        ax1.plot(dates, df['BOLL_DOWN'], label='BOLL下轨', color='green', linestyle='--', linewidth=1)
+        ax1.fill_between(dates, df['BOLL_DOWN'], df['BOLL_UP'], alpha=0.1, color='gray')
+    
+    # 绘制斐波那契回调线
+    if plot_fib and plot_fib:
+        fib_colors = {
+            'Fib 23.6%': 'orange',
+            'Fib 38.2%': 'gold',
+            'Fib 50.0%': 'green',
+            'Fib 61.8%': 'red',
+            'Fib 78.6%': 'purple',
+            'Fib 100% (Low)': 'blue',
+            'Fib 161.8%': 'brown',
+            'Fib 261.8%': 'darkred'
+        }
+        
+        for level, price in plot_fib.items():
+            if level in fib_colors:
+                ax1.axhline(y=price, color=fib_colors[level], linestyle='--', alpha=0.7, linewidth=1)
+                # 添加标签
+                ax1.text(dates[-1], price, f"{level} ({price:.2f})", 
+                        color=fib_colors[level], verticalalignment='center')
+    
+    # 绘制成交量
+    if plot_volume and len(axes) > 1:
+        # 成交量颜色：涨为红，跌为绿
+        colors = ['red' if df['close'].iloc[i] >= df['open'].iloc[i] else 'green' 
+                 for i in range(len(df))]
+        ax2.bar(dates, df['volume'], color=colors, alpha=0.7)
+        
+        if 'VOL_MA5' in df.columns:
+            ax2.plot(dates, df['VOL_MA5'], color='blue', label='5日均量')
+        
+        ax2.set_ylabel('成交量')
+        ax2.grid(True, linestyle='--', alpha=0.3)
+        ax2.legend(loc='upper left')
+    
+    # 设置轴标签和网格
+    ax1.set_ylabel('价格')
+    ax1.grid(True, linestyle='--', alpha=0.3)
+    ax1.legend(loc='best')
+    
+    # 调整x轴日期格式
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
+    # 保存图表
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    
+    return fig, axes 

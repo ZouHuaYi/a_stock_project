@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Union, Any
 # 导入配置和工具
 from config import ANALYZER_CONFIG, PATH_CONFIG
 from utils.logger import get_logger
-from utils.indicators import calculate_basic_indicators
+from utils.indicators import calculate_basic_indicators, calculate_technical_indicators
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -30,6 +30,7 @@ class BaseAnalyzer:
         """
         self.stock_code = stock_code
         self.stock_name = stock_name if stock_name else stock_code
+        self.daily_data = pd.DataFrame()
         
         # 处理end_date参数
         if end_date:
@@ -113,7 +114,7 @@ class BaseAnalyzer:
                 
                 # 使用工具函数计算技术指标
                 df = calculate_basic_indicators(df)
-                
+                self.daily_data = df
                 return df
             else:
                 logger.warning(f"数据库中未找到股票 {self.stock_code} 的数据")
@@ -123,13 +124,20 @@ class BaseAnalyzer:
             logger.error(f"从数据库获取股票数据时出错: {str(e)}")
             return pd.DataFrame()
     
-    def save_analysis_result(self) -> bool:
+    def save_analysis_result(self, analysis_result: Dict = None) -> bool:
         """
         保存分析结果到数据库
         
+        参数:
+            analysis_result (Dict, 可选): 分析结果字典，如不提供则使用self.analysis_result
+            
         返回:
             bool: 是否成功保存
         """
+        # 如果提供了分析结果参数，则更新self.analysis_result
+        if analysis_result is not None:
+            self.analysis_result = analysis_result
+            
         if not self.analysis_result:
             logger.warning("没有分析结果可保存")
             return False
@@ -170,16 +178,6 @@ class BaseAnalyzer:
             logger.error(f"保存分析结果时出错: {str(e)}")
             return False
     
-    def fetch_data(self) -> bool:
-        """
-        获取股票数据
-        
-        返回:
-            bool: 是否成功获取数据
-        """
-        # 在子类中实现
-        raise NotImplementedError("fetch_data方法需要在子类中实现")
-    
     def prepare_data(self) -> bool:
         """
         准备分析数据，计算指标
@@ -187,8 +185,18 @@ class BaseAnalyzer:
         返回:
             bool: 是否成功准备数据
         """
-        # 在子类中实现
-        raise NotImplementedError("prepare_data方法需要在子类中实现")
+        if self.daily_data is None or self.daily_data.empty:
+            logger.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
+            return False
+        
+        try:
+            # 计算各种技术指标
+            self.daily_data = calculate_technical_indicators(self.daily_data)
+            logger.info(f"已为{self.stock_code}计算技术指标")
+            return True
+        except Exception as e:
+            logger.error(f"准备数据时出错: {str(e)}")
+            return False
     
     def run_analysis(self) -> Dict:
         """

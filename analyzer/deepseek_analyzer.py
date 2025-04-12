@@ -12,16 +12,21 @@ from collections import Counter
 from wordcloud import WordCloud
 
 from analyzer.base_analyzer import BaseAnalyzer
-
+from utils.indicators import plot_stock_chart, calculate_technical_indicators
+from utils.logger import get_logger
+from utils.akshare_api import get_financial_reports
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
 plt.rcParams['font.sans-serif'] = ['SimHei']
 plt.rcParams['axes.unicode_minus'] = False
 
+# 创建日志记录器
+logger = get_logger(__name__)
+
 class DeepseekAnalyzer(BaseAnalyzer):
     """深度学习分析器类，用于使用大语言模型进行股票综合分析"""
     
-    def __init__(self, stock_code, stock_name=None, end_date=None, days=365, ai_type="deepseek", save_path="./datas"):
+    def __init__(self, stock_code, stock_name=None, end_date=None, days=365, ai_type="gemini", save_path="./datas/analysis"):
         """
         初始化深度学习分析器
         
@@ -52,105 +57,71 @@ class DeepseekAnalyzer(BaseAnalyzer):
             self.tavily_api = TavilyAPI()
             self.api_available = True
         except ImportError:
-            logging.warning("未找到LLM或Tavily API模块，将无法进行AI分析和网络搜索")
+            logger.warning("未找到LLM或Tavily API模块，将无法进行AI分析和网络搜索")
             self.api_available = False
     
-    def prepare_data(self):
+    def fetch_data(self) -> bool:
         """
-        准备分析数据，计算技术指标
+        获取股票数据
         
         返回:
-            bool: 是否成功准备数据
+            bool: 是否成功获取数据
         """
-        if self.daily_data is None or self.daily_data.empty:
-            logging.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
-            return False
+        logger.info(f"正在获取 {self.stock_name} ({self.stock_code}) 的日线数据...")
         
         try:
-            # 计算基本指标
-            self.calculate_technical_indicators()
-            return True
+            # 从数据库获取股票日线数据
+            self.daily_data = self.get_stock_daily_data()
+            
+            if self.daily_data.empty:
+                logger.warning(f"未能从数据库获取到股票 {self.stock_code} 的数据")
+                return False
+            else:
+                logger.info(f"成功获取 {self.stock_code} 的 {len(self.daily_data)} 条数据记录")
+                return True
+            
         except Exception as e:
-            logging.error(f"准备技术分析数据时出错: {e}")
+            logger.error(f"获取股票数据时出错: {str(e)}")
             return False
     
-    def calculate_technical_indicators(self):
-        """计算各种技术指标"""
-        if self.daily_data is None or self.daily_data.empty:
-            raise ValueError("没有可用的股票数据，请先获取数据")
-        
-        # 计算移动平均线
-        self.daily_data['MA5'] = self.daily_data['close'].rolling(window=5).mean()
-        self.daily_data['MA10'] = self.daily_data['close'].rolling(window=10).mean()
-        self.daily_data['MA20'] = self.daily_data['close'].rolling(window=20).mean()
-        self.daily_data['MA60'] = self.daily_data['close'].rolling(window=60).mean()
-        
-        # 计算MACD
-        self.daily_data['EMA12'] = self.daily_data['close'].ewm(span=12, adjust=False).mean()
-        self.daily_data['EMA26'] = self.daily_data['close'].ewm(span=26, adjust=False).mean()
-        self.daily_data['MACD'] = self.daily_data['EMA12'] - self.daily_data['EMA26']
-        self.daily_data['MACD_Signal'] = self.daily_data['MACD'].ewm(span=9, adjust=False).mean()
-        self.daily_data['MACD_Hist'] = self.daily_data['MACD'] - self.daily_data['MACD_Signal']
-        
-        # 计算RSI
-        delta = self.daily_data['close'].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        self.daily_data['RSI_14'] = 100 - (100 / (1 + rs))
-        
-        # 计算布林带
-        self.daily_data['BOLL_MA'] = self.daily_data['close'].rolling(window=20).mean()
-        self.daily_data['BOLL_STD'] = self.daily_data['close'].rolling(window=20).std()
-        self.daily_data['BOLL_Upper'] = self.daily_data['BOLL_MA'] + 2 * self.daily_data['BOLL_STD']
-        self.daily_data['BOLL_Lower'] = self.daily_data['BOLL_MA'] - 2 * self.daily_data['BOLL_STD']
-        
-        # 计算成交量指标
-        self.daily_data['VOL_MA5'] = self.daily_data['volume'].rolling(window=5).mean()
-        self.daily_data['VOL_MA10'] = self.daily_data['volume'].rolling(window=10).mean()
-        
-        logging.info("技术指标计算完成")
-    
-    def fetch_financial_data(self):
+    def fetch_financial_data(self) -> bool:
         """获取财务报表数据"""
         if not self.api_available:
-            logging.warning("API模块不可用，无法获取财务数据")
+            logger.warning("API模块不可用，无法获取财务数据")
             return False
             
         try:
             # 使用get_stock_finance_indicator方法获取财务数据
-            self.financial_data = self.get_stock_finance_indicator(
+            self.financial_data = get_financial_reports(
                 limit=4,  # 获取最近4个季度的数据
                 report_type="季度报告"  # 可选:"季度报告", "半年报", "年度报告"
             )
             
             if self.financial_data is not None and not self.financial_data.empty:
-                logging.info(f"成功获取 {self.stock_code} 的财务数据")
+                logger.info(f"成功获取 {self.stock_code} 的财务数据")
                 return True
             else:
-                logging.warning(f"未获取到 {self.stock_code} 的财务数据")
+                logger.warning(f"未获取到 {self.stock_code} 的财务数据")
                 return False
         except Exception as e:
-            logging.error(f"获取财务数据失败: {e}")
+            logger.error(f"获取财务数据失败: {e}")
             return False
     
-    def fetch_news_sentiment(self, days=30):
+    def fetch_news_sentiment(self, days=30) -> bool:
         """使用Tavily获取新闻舆情数据"""
         if not self.api_available:
-            logging.warning("API模块不可用，无法获取新闻舆情数据")
+            logger.warning("API模块不可用，无法获取新闻舆情数据")
             return False
             
         try:    
             # 确保股票名称已获取
             if not self.stock_name:
-                self.fetch_stock_name()
+                self.get_stock_name()
                 
             if not self.stock_name:
                 raise ValueError("未能获取股票名称")
             
-            logging.info(f"正在搜索{self.stock_name}的相关新闻...")
+            logger.info(f"正在搜索{self.stock_name}的相关新闻...")
             
             # 创建查询参数
             query = f"{self.stock_code} {self.stock_name} 股票"
@@ -168,16 +139,16 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 self.news_data = self.tavily_api.process_tavily_response(response)
                 return True   
             else:
-                logging.warning("未获取到新闻舆情数据")
+                logger.warning("未获取到新闻舆情数据")
                 return False
         except Exception as e:
-            logging.error(f"获取新闻舆情失败: {e}")
+            logger.error(f"获取新闻舆情失败: {e}")
             return False
     
-    def generate_technical_summary(self):
+    def generate_technical_summary(self) -> dict:
         """生成技术分析摘要"""
         if self.daily_data is None or self.daily_data.empty:
-            logging.warning("没有可用的技术指标数据，无法生成摘要")
+            logger.warning("没有可用的技术指标数据，无法生成摘要")
             return None
         
         # 获取最近数据
@@ -197,7 +168,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
         long_trend = "上涨" if recent_data['close'] > recent_data['MA60'] else "下跌"
         
         # MACD信号
-        macd_signal = "看多" if recent_data['MACD'] > recent_data['MACD_Signal'] else "看空"
+        macd_signal = "看多" if recent_data['MACD_DIF'] > recent_data['MACD_DEA'] else "看空"
         
         # RSI状态
         rsi_value = recent_data['RSI_14']
@@ -223,7 +194,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
         
         return summary
     
-    def generate_financial_summary(self):
+    def generate_financial_summary(self) -> str:
         """生成财务分析摘要"""
         if self.financial_data is None or self.financial_data.empty:
             return None
@@ -258,10 +229,10 @@ class DeepseekAnalyzer(BaseAnalyzer):
             
             return summary
         except Exception as e:
-            logging.error(f"生成财务摘要时出错: {e}")
+            logger.error(f"生成财务摘要时出错: {e}")
             return "财务数据处理出错"
     
-    def generate_news_summary(self):
+    def generate_news_summary(self) -> dict:
         """生成新闻舆情摘要"""
         if self.news_data is None or self.news_data.empty:
             return None
@@ -286,87 +257,58 @@ class DeepseekAnalyzer(BaseAnalyzer):
             
             return summary
         except Exception as e:
-            logging.error(f"生成新闻摘要时出错: {e}")
+            logger.error(f"生成新闻摘要时出错: {e}")
             return None
     
-    def plot_analysis_charts(self, save_filename=None):
+    def plot_analysis_charts(self, save_filename=None) -> bool:
         """绘制分析图表"""
         if self.daily_data is None or self.daily_data.empty:
-            logging.warning("无数据可绘制。请先获取数据。")
+            logger.warning("无数据可绘制。请先获取数据。")
             return False
 
         if save_filename is None:
             save_filename = f"{self.stock_code}_技术分析_{self.end_date.strftime('%Y%m%d')}.png"
-        save_path = os.path.join(self.save_path, save_filename)
+        save_path = os.path.join(self.save_path, self.stock_code, save_filename)
         
-        # 选择用于绘图的数据（最近60个交易日）
-        plot_days = min(60, len(self.daily_data))
-        data = self.daily_data.iloc[-plot_days:]
-        data_indices = data.index
-        
-        plt.figure(figsize=(16, 12))
-        
-        # 价格和移动平均线
-        plt.subplot(5, 1, 1)
-        plt.plot(data_indices, data['close'], label='收盘价')
-        plt.plot(data_indices, data['MA5'], label='5日均线')
-        plt.plot(data_indices, data['MA20'], label='20日均线')
-        plt.plot(data_indices, data['MA60'], label='60日均线')
-        plt.title(f'{self.stock_name}({self.stock_code}) 技术分析')
-        plt.legend()
-        
-        # 布林带
-        plt.subplot(5, 1, 2)
-        plt.plot(data_indices, data['close'], label='收盘价')
-        plt.plot(data_indices, data['BOLL_MA'], label='布林中轨')
-        plt.plot(data_indices, data['BOLL_Upper'], label='布林上轨')
-        plt.plot(data_indices, data['BOLL_Lower'], label='布林下轨')
-        plt.fill_between(data_indices, data['BOLL_Lower'], data['BOLL_Upper'], alpha=0.1, color='gray')
-        plt.title('布林带')
-        plt.legend()
-        
-        # MACD
-        plt.subplot(5, 1, 3)
-        plt.bar(data_indices, data['MACD_Hist'], label='MACD柱状', color=['g' if x < 0 else 'r' for x in data['MACD_Hist']])
-        plt.plot(data_indices, data['MACD'], label='MACD')
-        plt.plot(data_indices, data['MACD_Signal'], label='信号线')
-        plt.title('MACD指标')
-        plt.legend()
-        
-        # RSI
-        plt.subplot(5, 1, 4)
-        plt.plot(data_indices, data['RSI_14'], label='12日RSI')
-        plt.axhline(y=70, color='r', linestyle='--')
-        plt.axhline(y=30, color='g', linestyle='--')
-        plt.title('相对强弱指数(RSI)')
-        plt.legend()
-        
-        # 成交量
-        plt.subplot(5, 1, 5)
-        plt.bar(data_indices, data['volume'], label='成交量')
-        plt.title('成交量')
-        plt.legend()
-        
-        plt.tight_layout()
-        
+        # 使用通用绘图函数
         try:
-            plt.savefig(save_path, dpi=150, bbox_inches='tight')
-            logging.info(f"技术分析图表已保存至: {save_path}")
-            plt.close()
+            # 选择最近60个交易日的数据
+            plot_days = min(60, len(self.daily_data))
+            plot_df = self.daily_data.iloc[-plot_days:].copy()
+            
+            title = f'{self.stock_name}({self.stock_code}) 技术分析'
+            
+            # 调用通用绘图函数
+            fig, axes = plot_stock_chart(
+                plot_df, 
+                title=title, 
+                save_path=save_path,
+                plot_ma=True, 
+                plot_volume=True, 
+                plot_boll=True
+            )
+            
+            # 更新分析结果中的图表路径
+            if 'analysis_result' in self.__dict__ and isinstance(self.analysis_result, dict):
+                self.analysis_result.update({
+                    'chart_path': save_path
+                })
+            
+            logger.info(f"技术分析图表已保存至: {save_path}")
             return True
         except Exception as e:
-            logging.error(f"保存图表失败: {e}")
+            logger.error(f"绘制图表失败: {e}")
             return False
     
-    def generate_word_cloud(self, save_filename=None):
+    def generate_word_cloud(self, save_filename=None) -> bool:
         """生成新闻词云图"""
         if self.news_data is None or self.news_data.empty:
-            logging.warning("没有可用的新闻数据，无法生成词云")
+            logger.warning("没有可用的新闻数据，无法生成词云")
             return False
             
         if save_filename is None:
             save_filename = f"{self.stock_code}_词云_{self.end_date.strftime('%Y%m%d')}.png"
-        save_path = os.path.join(self.save_path, save_filename)
+        save_path = os.path.join(self.save_path, self.stock_code, save_filename)
         
         try:
             text = ' '.join(self.news_data['title'].tolist())
@@ -386,17 +328,17 @@ class DeepseekAnalyzer(BaseAnalyzer):
             plt.title(f'{self.stock_name} 新闻词云')
             
             plt.savefig(save_path)
-            logging.info(f"词云图已保存至: {save_path}")
+            logger.info(f"词云图已保存至: {save_path}")
             plt.close()
             return True
         except Exception as e:
-            logging.error(f"生成词云图失败: {e}")
+            logger.error(f"生成词云图失败: {e}")
             return False
     
-    def analyze_with_ai(self, additional_context=None):
+    def analyze_with_ai(self, additional_context=None) -> str:
         """使用AI进行综合分析"""
         if not self.api_available:
-            logging.warning("AI API不可用，无法进行AI分析")
+            logger.warning("AI API不可用，无法进行AI分析")
             return "AI分析模块未加载，无法生成AI分析报告"
         
         try:
@@ -405,10 +347,10 @@ class DeepseekAnalyzer(BaseAnalyzer):
             news_summary = self.generate_news_summary()
             
             if not technical_summary:
-                logging.warning("缺少技术分析数据，无法进行AI分析")
+                logger.warning("缺少技术分析数据，无法进行AI分析")
                 return "缺少技术分析数据，无法生成AI分析报告"
             
-            logging.info("正在使用AI生成分析报告...")
+            logger.info("正在使用AI生成分析报告...")
             
             # 准备提示词
             prompt = f"""
@@ -427,17 +369,19 @@ class DeepseekAnalyzer(BaseAnalyzer):
             
             # 根据指定模型类型调用不同的API
             if self.ai_type == "gemini":
+                logger.info(f"使用Gemini模型生成分析报告")
                 self.analysis_report = self.llm.generate_gemini_response(prompt)
             else:  # 默认使用deepseek
+                logger.info(f"使用Deepseek模型生成分析报告")
                 self.analysis_report = self.llm.generate_deepseek_response(prompt)
             
             return self.analysis_report
             
         except Exception as e:
-            logging.error(f"AI分析出错: {e}")
+            logger.error(f"AI分析出错: {e}")
             return f"AI分析过程中出错: {e}"
     
-    def _format_news_summary(self, summary):
+    def _format_news_summary(self, summary) -> str:
         """格式化新闻摘要"""
         if not summary:
             return "无新闻数据"
@@ -450,12 +394,12 @@ class DeepseekAnalyzer(BaseAnalyzer):
         )
         return formatted
     
-    def save_analysis_report(self, file_name=None):
+    def save_analysis_report(self, file_name=None) -> str:
         """保存完整分析报告到文件"""
         if file_name is None:
             file_name = f"{self.stock_code}_分析报告_{self.end_date.strftime('%Y%m%d')}.txt"
         
-        file_path = os.path.join(self.save_path, file_name)
+        file_path = os.path.join(self.save_path, self.stock_code, file_name)
         
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
@@ -498,13 +442,13 @@ class DeepseekAnalyzer(BaseAnalyzer):
                 f.write("【AI综合分析】\n")
                 f.write(self.analysis_report if self.analysis_report else "未生成AI分析报告")
             
-            logging.info(f"完整分析报告已保存至 {file_path}")
+            logger.info(f"完整分析报告已保存至 {file_path}")
             return file_path
         except Exception as e:
-            logging.error(f"保存分析报告失败: {e}")
+            logger.error(f"保存分析报告失败: {e}")
             return None
     
-    def run_analysis(self, additional_context=None):
+    def run_analysis(self, additional_context=None) -> dict:
         """
         运行完整分析流程
         
@@ -514,25 +458,41 @@ class DeepseekAnalyzer(BaseAnalyzer):
         返回:
             dict: 分析结果
         """
+        # 初始化分析结果
+        self.analysis_result = {
+            'status': 'error',
+            'stock_code': self.stock_code,
+            'stock_name': self.stock_name,
+            'date': self.end_date.strftime('%Y-%m-%d'),
+            'message': '分析未完成'
+        }
+        
+        # 获取数据
         if not self.fetch_data():
-            return {'status': 'error', 'message': '获取股票数据失败'}
+            self.analysis_result.update({
+                'message': '获取数据失败'
+            })
+            return self.analysis_result
         
         # 准备技术指标
         if not self.prepare_data():
-            return {'status': 'error', 'message': '准备数据失败'}
+            self.analysis_result.update({
+                'message': '准备数据失败'
+            })
+            return self.analysis_result
         
         # 获取财务数据(可选)
-        self.fetch_financial_data()
+        fin_success = self.fetch_financial_data()
         
         # 获取新闻舆情(可选)
-        self.fetch_news_sentiment()
+        news_success = self.fetch_news_sentiment()
         
         # 创建数据目录
         data_dir = os.path.join(self.save_path, self.stock_code)
         os.makedirs(data_dir, exist_ok=True)
         
         # 绘制分析图表
-        self.plot_analysis_charts(save_filename=f"{self.stock_code}_技术分析.png")
+        chart_success = self.plot_analysis_charts(save_filename=f"{self.stock_code}_技术分析.png")
         
         # 生成新闻词云(如果有新闻数据)
         if self.news_data is not None and not self.news_data.empty:
@@ -545,20 +505,18 @@ class DeepseekAnalyzer(BaseAnalyzer):
         report_path = self.save_analysis_report(f"{self.stock_code}_分析报告.txt")
         
         # 构建分析结果
-        analysis_result = {
+        self.analysis_result.update({
             'status': 'success',
-            'stock_code': self.stock_code,
-            'stock_name': self.stock_name,
-            'date': self.end_date.strftime('%Y-%m-%d'),
             'technical_summary': self.generate_technical_summary(),
-            'financial_summary': self.generate_financial_summary(),
-            'news_summary': self.generate_news_summary(),
+            'financial_summary': self.generate_financial_summary() if fin_success else None,
+            'news_summary': self.generate_news_summary() if news_success else None,
             'ai_analysis': ai_analysis,
-            'report_path': report_path
-        }
+            'report_path': report_path,
+            'description': f"{self.stock_name}({self.stock_code})已完成AI综合分析"
+        })
         
-        # 保存分析结果
-        self.save_analysis_result(analysis_result)
+        # 保存分析结果到数据库
+        self.save_analysis_result()
         
-        logging.info("分析流程完成，结果已保存")
-        return analysis_result 
+        logger.info("分析流程完成，结果已保存")
+        return self.analysis_result 

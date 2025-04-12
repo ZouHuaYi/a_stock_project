@@ -7,6 +7,9 @@ import matplotlib.dates as mdates  # 用于标注
 from matplotlib.patches import Rectangle
 import os
 
+# 导入公共工具函数
+from utils.indicators import calculate_fibonacci_levels, plot_stock_chart
+
 
 class FibonacciAnalysis:
     """斐波那契回调分析类，用于计算和可视化股票的斐波那契回调水平"""
@@ -44,6 +47,8 @@ class FibonacciAnalysis:
         self.stock_hist_df = None
         self.fib_levels = {}
         self.plot_annotations = []
+        self.swing_low_date = None
+        self.swing_high_date = None
         self.save_path = save_path
         # 创建保存目录(如果不存在)
         if not os.path.exists(save_path):
@@ -89,67 +94,60 @@ class FibonacciAnalysis:
         
         # 按日期排序
         self.stock_hist_df.sort_index(inplace=True)
+        
+        # 重命名列以与其他函数兼容
+        name_map = {
+            '开盘': 'open',
+            '最高': 'high',
+            '最低': 'low',
+            '收盘': 'close',
+            '成交量': 'volume'
+        }
+        self.stock_hist_df = self.stock_hist_df.rename(columns=name_map)
+        
         return True
         
     def calculate_fibonacci_levels(self):
         """识别主要波段并计算斐波那契回调位"""
         if self.stock_hist_df is None:
             return False
-            
-        # 找到整个时间段内的最低点和最高点
-        swing_low_date = self.stock_hist_df['最低'].idxmin()
-        swing_high_date = self.stock_hist_df['最高'].idxmax()
         
-        # 确保找到的是一个有效的波段（低点在高点之前，构成一个上升浪）
-        if swing_low_date < swing_high_date:
-            swing_low_price = self.stock_hist_df.loc[swing_low_date, '最低']
-            swing_high_price = self.stock_hist_df.loc[swing_high_date, '最高']
-            price_diff = swing_high_price - swing_low_price
+        # 使用共享函数计算斐波那契水平，使用波段模式
+        self.fib_levels = calculate_fibonacci_levels(self.stock_hist_df, use_swing=True)
+        
+        if not self.fib_levels:
+            print("\n未能计算有效的斐波那契回调水平")
+            return False
+        
+        # 找到波段的起点和终点供绘图标记使用
+        # 这里简单实现，实际项目中可能需要更复杂的波段识别逻辑
+        try:
+            self.swing_low_date = self.stock_hist_df['low'].idxmin()
+            high_df = self.stock_hist_df.loc[self.swing_low_date:]
+            self.swing_high_date = high_df['high'].idxmax()
             
-            if price_diff > 0:  # 确保价格有差异
-                print(f"\n识别到主要上升波段:")
-                print(f"  起点 (Low): {swing_low_date.strftime('%Y-%m-%d')} @ {swing_low_price:.2f}")
-                print(f"  终点 (High): {swing_high_date.strftime('%Y-%m-%d')} @ {swing_high_price:.2f}")
-                
-                # 计算斐波那契回调水平
-                self.fib_levels = {
-                    'Fib 0.0% (High)': swing_high_price,
-                    'Fib 38.2%': swing_high_price - price_diff * 0.382,
-                    'Fib 50.0%': swing_high_price - price_diff * 0.5,
-                    'Fib 61.8%': swing_high_price - price_diff * 0.618,
-                    'Fib 100% (Low)': swing_low_price,
-                    'Fib 161.8%': swing_high_price + price_diff * 0.618,
-                    'Fib 200%': swing_high_price + price_diff * 1,
-                    'Fib 261.8%': swing_high_price + price_diff * 1.618
+            # 准备标注信息
+            self.plot_annotations = [
+                {
+                    'xy': (self.swing_low_date, self.stock_hist_df.loc[self.swing_low_date, 'low']), 
+                    'text': f'波段低点\n{self.stock_hist_df.loc[self.swing_low_date, "low"]:.2f}', 
+                    'xytext': (-60, -30)
+                },
+                {
+                    'xy': (self.swing_high_date, self.stock_hist_df.loc[self.swing_high_date, 'high']), 
+                    'text': f'波段高点\n{self.stock_hist_df.loc[self.swing_high_date, "high"]:.2f}', 
+                    'xytext': (10, 20)
                 }
-                
-                # 准备标注信息
-                self.plot_annotations = [
-                    {
-                        'xy': (swing_low_date, swing_low_price), 
-                        'text': f'Swing Low\n{swing_low_price:.2f}', 
-                        'xytext': (-60, -30)
-                    },
-                    {
-                        'xy': (swing_high_date, swing_high_price), 
-                        'text': f'Swing High\n{swing_high_price:.2f}', 
-                        'xytext': (10, 20)
-                    }
-                ]
-                
-                print("\n计算得到的斐波那契回调位:")
-                for label, price in self.fib_levels.items():
-                    print(f"  {label}: {price:.2f}")
-                    
-                return True
-            else:
-                print("\n未能识别到有效的价格波动范围来计算斐波那契水平。")
-        else:
-            print(f"\n注意：时段内最高点 ({swing_high_date.strftime('%Y-%m-%d')}) 出现在最低点 ({swing_low_date.strftime('%Y-%m-%d')}) 之前。")
-            print("这可能是一个下降趋势。如需分析反弹，请调整斐波那契计算逻辑。")
-            print("当前将不绘制斐波那契线。")
+            ]
             
-        return False
+            print("\n计算得到的斐波那契回调位:")
+            for label, price in self.fib_levels.items():
+                print(f"  {label}: {price:.2f}")
+                
+            return True
+        except Exception as e:
+            print(f"计算波段端点时出错: {e}")
+            return False
         
     def plot_chart(self, save_filename=None):
         """使用matplotlib绘制K线图和斐波那契水平并保存为PNG文件
@@ -167,122 +165,46 @@ class FibonacciAnalysis:
         
         print("\n正在生成图表...")
         
-        # 创建一个包含两个子图的Figure(主图和成交量图)
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
-        fig.suptitle(f'{self.stock_name} ({self.stock_code}) 日线图与斐波那契回调', fontsize=16)
-        
-        # 绘制K线图
-        dates = self.stock_hist_df.index
-        opens = self.stock_hist_df['开盘']
-        highs = self.stock_hist_df['最高']
-        lows = self.stock_hist_df['最低']
-        closes = self.stock_hist_df['收盘']
-        volumes = self.stock_hist_df['成交量']
-        
-        # 设置x轴为日期格式
-        date_ticks = np.linspace(0, len(dates) - 1, min(10, len(dates)))
-        date_labels = [dates[int(idx)].strftime('%Y-%m-%d') for idx in date_ticks]
-        
-        # 绘制K线
-        width = 0.6  # K线宽度
-        offset = width / 2.0
-        
-        # K线绘制逻辑
-        for i in range(len(dates)):
-            # 价格上涨用红色，下跌用绿色(中国市场风格)
-            if closes[i] >= opens[i]:
-                color = 'red'
-                body_height = closes[i] - opens[i]
-                body_bottom = opens[i]
-            else:
-                color = 'green'
-                body_height = opens[i] - closes[i]
-                body_bottom = closes[i]
+        try:
+            # 使用通用绘图函数
+            title = f'{self.stock_name} ({self.stock_code}) 日线图与斐波那契回调'
             
-            # 绘制影线
-            ax1.plot([i, i], [lows[i], highs[i]], color=color, linewidth=1)
+            # 调用共享绘图函数
+            fig, axes = plot_stock_chart(
+                self.stock_hist_df,
+                title=title,
+                save_path=save_path,
+                plot_ma=True,
+                plot_volume=True,
+                plot_fib=self.fib_levels
+            )
             
-            # 绘制实体
-            if body_height == 0:  # 开盘=收盘的情况
-                body_height = 0.001  # 赋予一个极小值，以便能够显示
-            rect = Rectangle((i - offset, body_bottom), width, body_height, 
-                             facecolor=color, edgecolor=color)
-            ax1.add_patch(rect)
-        
-        # 绘制移动平均线
-        ma5 = self.stock_hist_df['收盘'].rolling(window=5).mean()
-        ma20 = self.stock_hist_df['收盘'].rolling(window=20).mean()
-        ma60 = self.stock_hist_df['收盘'].rolling(window=60).mean()
-        
-        x = np.arange(len(dates))
-        ax1.plot(x, ma5, 'blue', linewidth=1, label='MA5')
-        ax1.plot(x, ma20, 'orange', linewidth=1, label='MA20')
-        ax1.plot(x, ma60, 'purple', linewidth=1, label='MA60')
-        
-        # 绘制斐波那契回调线
-        if self.fib_levels:
-            fib_colors = {
-                'Fib 38.2%': 'orange',
-                'Fib 50.0%': 'yellowgreen',
-                'Fib 61.8%': 'green',
-                'Fib 100% (Low)': 'lightblue',
-                'Fib 161.8%': 'red',
-                'Fib 200%': 'blue',
-                'Fib 261.8%': 'purple'
-            }
+            # 添加波段起止点标注（如果有的话）
+            if fig and len(axes) > 0 and self.plot_annotations:
+                ax1 = axes[0]
+                for ann in self.plot_annotations:
+                    date = ann['xy'][0]
+                    price = ann['xy'][1]
+                    ax1.annotate(
+                        ann['text'],
+                        xy=(date, price),
+                        xytext=(ann['xytext'][0]/10, ann['xytext'][1]/10),
+                        textcoords='offset points',
+                        arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=-0.2'),
+                        fontsize=8,
+                        bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.3)
+                    )
+                
+                # 保存更新后的图表
+                plt.savefig(save_path, dpi=150, bbox_inches='tight')
+                plt.close(fig)
             
-            for level, price in self.fib_levels.items():
-                if level in fib_colors:
-                    ax1.axhline(y=price, color=fib_colors[level], linestyle='--', linewidth=1)
-                    # 添加标签
-                    ax1.text(len(dates) - 1, price, f"{level} ({price:.2f})", 
-                            color=fib_colors[level], verticalalignment='center')
-        
-        # 绘制成交量
-        for i in range(len(dates)):
-            # 成交量颜色和K线一致，上涨为红，下跌为绿
-            if closes[i] >= opens[i]:
-                color = 'red'
-            else:
-                color = 'green'
-            ax2.bar(i, volumes[i], width=width, color=color, alpha=0.7)
-        
-        # 添加网格线
-        ax1.grid(True, linestyle=':', alpha=0.3)
-        ax2.grid(True, linestyle=':', alpha=0.3)
-        
-        # 设置轴标签
-        ax1.set_ylabel('价格 (前复权)')
-        ax2.set_ylabel('成交量')
-        
-        # 设置x轴刻度和标签
-        plt.xticks(date_ticks, date_labels, rotation=45)
-        plt.tight_layout()
-        
-        # 添加波段起止点标注
-        if self.plot_annotations:
-            # 找到日期对应的索引位置
-            for ann in self.plot_annotations:
-                date = ann['xy'][0]
-                price = ann['xy'][1]
-                date_idx = self.stock_hist_df.index.get_loc(date)
-                ax1.annotate(
-                    ann['text'],
-                    xy=(date_idx, price),
-                    xytext=(date_idx + ann['xytext'][0]/10, price + ann['xytext'][1]/10),
-                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=-0.2'),
-                    fontsize=8,
-                    bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.3)
-                )
-        
-        # 添加图例
-        ax1.legend(loc='upper left')
-        
-        # 保存图表
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"图表已保存到: {save_path}")
-        plt.close(fig)  # 关闭图表释放内存
-        return True
+            print(f"图表已保存到: {save_path}")
+            return True
+            
+        except Exception as e:
+            print(f"绘制图表时出错: {e}")
+            return False
         
     def run_analysis(self, save_filename=None):
         """运行完整的分析流程"""

@@ -15,7 +15,7 @@ from analyzer.base_analyzer import BaseAnalyzer
 class VolPriceAnalyzer(BaseAnalyzer):
     """量价关系分析器类，用于识别股票的洗盘、拉升等特征"""
     
-    def __init__(self, stock_code, stock_name=None, end_date=None, days=60, save_path="./datas"):
+    def __init__(self, stock_code, stock_name=None, end_date=None, days=60, save_path="./datas/analysis"):
         """
         初始化量价关系分析器
         
@@ -45,14 +45,14 @@ class VolPriceAnalyzer(BaseAnalyzer):
         
         try:
             # 计算移动平均线
-            self.daily_data['MA5'] = self.daily_data['close'].rolling(window=5).mean()
-            self.daily_data['MA10'] = self.daily_data['close'].rolling(window=10).mean()
-            self.daily_data['MA20'] = self.daily_data['close'].rolling(window=20).mean()
-            self.daily_data['MA30'] = self.daily_data['close'].rolling(window=30).mean()
+            self.daily_data.loc[:, 'MA5'] = self.daily_data['close'].rolling(window=5).mean()
+            self.daily_data.loc[:, 'MA10'] = self.daily_data['close'].rolling(window=10).mean()
+            self.daily_data.loc[:, 'MA20'] = self.daily_data['close'].rolling(window=20).mean()
+            self.daily_data.loc[:, 'MA30'] = self.daily_data['close'].rolling(window=30).mean()
             
             # 计算成交量移动平均
-            self.daily_data['VOL_MA5'] = self.daily_data['volume'].rolling(window=5).mean()
-            self.daily_data['VOL_MA10'] = self.daily_data['volume'].rolling(window=10).mean()
+            self.daily_data.loc[:, 'VOL_MA5'] = self.daily_data['volume'].rolling(window=5).mean()
+            self.daily_data.loc[:, 'VOL_MA10'] = self.daily_data['volume'].rolling(window=10).mean()
             
             # 计算量比（当日成交量/5日平均成交量）
             self.daily_data['volume_ratio'] = self.daily_data['volume'] / self.daily_data['VOL_MA5']
@@ -371,14 +371,14 @@ class VolPriceAnalyzer(BaseAnalyzer):
             logging.error(f"保存图表失败: {e}")
             return False
     
-    def run_analysis(self):
+    def run_analysis(self, save_path=None):
         """
         运行完整分析流程
         
         返回:
             dict: 分析结果
         """
-        if not self.fetch_data():
+        if self.get_stock_daily_data().empty:
             return {'status': 'error', 'message': '获取数据失败'}
         
         # 先尝试准备数据
@@ -391,7 +391,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
         # 如果分析成功，则绘制图表
         if analysis_result['status'] == 'success':
             try:
-                self.plot_vol_price_chart()
+                self.plot_vol_price_chart(save_path)
             except Exception as e:
                 logging.error(f"绘制图表失败: {e}")
                 analysis_result['chart_error'] = str(e)

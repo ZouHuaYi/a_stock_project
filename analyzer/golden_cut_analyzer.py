@@ -15,7 +15,7 @@ import logging
 # 导入基类和工具
 from analyzer.base_analyzer import BaseAnalyzer
 from utils.logger import get_logger
-from utils.indicators import calculate_fibonacci_levels
+from utils.indicators import calculate_fibonacci_levels, plot_stock_chart
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 class GoldenCutAnalyzer(BaseAnalyzer):
     """斐波那契黄金分割分析器，用于计算和可视化股票的斐波那契回调水平"""
     
-    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, days: int = 365, save_path="./datas/fib_analysis"):
+    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, days: int = 365, save_path="./datas/analysis"):
         """
         初始化斐波那契分析器
         
@@ -38,7 +38,6 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         super().__init__(stock_code, stock_name, end_date, days)
         
         # 初始化斐波那契分析特有的属性
-        self.daily_data = None
         self.fib_levels = {}
         self.plot_annotations = []
         
@@ -58,7 +57,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         logger.info(f"正在获取 {self.stock_name} ({self.stock_code}) 从 {self.start_date_str} 到 {self.end_date_str} 的日线数据...")
         
         try:
-            # 从父类方法获取股票日线数据（已包含技术指标）
+            # 直接使用基类的数据获取方法
             self.daily_data = self.get_stock_daily_data()
             
             if self.daily_data.empty:
@@ -211,13 +210,13 @@ class GoldenCutAnalyzer(BaseAnalyzer):
     
     def prepare_data(self) -> bool:
         """
-        准备分析数据，计算指标
+        准备分析数据
         
         返回:
             bool: 是否成功准备数据
         """
-        if self.daily_data is None or self.daily_data.empty:
-            logger.warning("没有可用的数据进行处理")
+        # 首先调用基类的prepare_data方法计算通用技术指标
+        if not super().prepare_data():
             return False
             
         try:
@@ -226,31 +225,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 self.daily_data['trade_date'] = pd.to_datetime(self.daily_data['trade_date'])
                 self.daily_data.set_index('trade_date', inplace=True)
             
-            # 确保列名为英文标准形式
-            column_mapping_to_english = {
-                '开盘': 'open',
-                '最高': 'high',
-                '最低': 'low',
-                '收盘': 'close',
-                '成交量': 'volume'
-            }
-            
-            # 如果存在中文列名，将其转换为英文
-            rename_cols = {}
-            for old_col, new_col in column_mapping_to_english.items():
-                if old_col in self.daily_data.columns:
-                    rename_cols[old_col] = new_col
-            
-            if rename_cols:
-                self.daily_data.rename(columns=rename_cols, inplace=True)
-            
-            # 确保数据类型正确
-            numeric_cols = ['open', 'high', 'low', 'close', 'volume']
-            for col in numeric_cols:
-                if col in self.daily_data.columns:
-                    self.daily_data[col] = self.daily_data[col].astype(float)
-            
-            # 按日期排序
+            # 确保按日期排序
             self.daily_data.sort_index(inplace=True)
             
             logger.info(f"成功处理 {self.stock_code} 的数据")
@@ -286,14 +261,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 logger.info(f"  终点 (High): {swing_high_date.strftime('%Y-%m-%d')} @ {swing_high_price:.2f}")
                 
                 # 使用工具函数计算斐波那契水平
-                # 创建一个临时DataFrame用于计算
-                temp_df = pd.DataFrame({
-                    'high': [swing_high_price],
-                    'low': [swing_low_price]
-                })
-                
-                # 计算斐波那契水平
-                self.fib_levels = calculate_fibonacci_levels(temp_df)
+                self.fib_levels = calculate_fibonacci_levels(self.daily_data, use_swing=True)
                 
                 # 验证是否成功计算
                 if not self.fib_levels:
@@ -304,12 +272,12 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 self.plot_annotations = [
                     {
                         'xy': (swing_low_date, swing_low_price), 
-                        'text': f'Swing Low\n{swing_low_price:.2f}', 
+                        'text': f'波段低点\n{swing_low_price:.2f}', 
                         'xytext': (-60, -30)
                     },
                     {
                         'xy': (swing_high_date, swing_high_price), 
-                        'text': f'Swing High\n{swing_high_price:.2f}', 
+                        'text': f'波段高点\n{swing_high_price:.2f}', 
                         'xytext': (10, 20)
                     }
                 ]
@@ -351,117 +319,37 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         plt.rcParams['axes.unicode_minus'] = False
         
         try:
-            # 创建一个包含两个子图的Figure(主图和成交量图)
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
-            fig.suptitle(f'{self.stock_name} ({self.stock_code}) 日线图与斐波那契回调', fontsize=16)
+            # 使用通用绘图函数
+            title = f'{self.stock_name} ({self.stock_code}) 日线图与斐波那契回调'
             
-            # 获取用于绘图的数据
-            dates = self.daily_data.index
-            opens = self.daily_data['open']
-            highs = self.daily_data['high']
-            lows = self.daily_data['low']
-            closes = self.daily_data['close']
-            volumes = self.daily_data['volume']
+            # 调用共享绘图函数
+            fig, axes = plot_stock_chart(
+                self.daily_data,
+                title=title,
+                save_path=None,  # 先不保存，后面添加标注后再保存
+                plot_ma=True,
+                plot_volume=True,
+                plot_fib=self.fib_levels
+            )
             
-            # 绘制K线
-            width = 0.6  # K线宽度
-            offset = width / 2.0
-            
-            # K线绘制逻辑
-            for i in range(len(dates)):
-                # 价格上涨用红色，下跌用绿色(中国市场风格)
-                if closes.iloc[i] >= opens.iloc[i]:
-                    color = 'red'
-                    body_height = closes.iloc[i] - opens.iloc[i]
-                    body_bottom = opens.iloc[i]
-                else:
-                    color = 'green'
-                    body_height = opens.iloc[i] - closes.iloc[i]
-                    body_bottom = closes.iloc[i]
-                
-                # 绘制影线
-                ax1.plot([i, i], [lows.iloc[i], highs.iloc[i]], color=color, linewidth=1)
-                
-                # 绘制实体
-                if body_height == 0:  # 开盘=收盘的情况
-                    body_height = 0.001  # 赋予一个极小值，以便能够显示
-                rect = Rectangle((i - offset, body_bottom), width, body_height, 
-                                facecolor=color, edgecolor=color)
-                ax1.add_patch(rect)
-            
-            # 绘制移动平均线
-            x = np.arange(len(dates))
-            ax1.plot(x, self.daily_data['MA5'], 'blue', linewidth=1, label='MA5')
-            ax1.plot(x, self.daily_data['MA20'], 'orange', linewidth=1, label='MA20')
-            if 'MA60' in self.daily_data.columns:
-                ax1.plot(x, self.daily_data['MA60'], 'purple', linewidth=1, label='MA60')
-            
-            # 绘制斐波那契回调线
-            if self.fib_levels:
-                fib_colors = {
-                    'Fib 0.0% (High)': 'black',
-                    'Fib 23.6%': 'lightblue',
-                    'Fib 38.2%': 'orange',
-                    'Fib 50.0%': 'yellowgreen',
-                    'Fib 61.8%': 'green',
-                    'Fib 78.6%': 'darkgreen',
-                    'Fib 100% (Low)': 'lightblue',
-                    'Fib 161.8%': 'red',
-                    'Fib 261.8%': 'purple'
-                }
-                
-                for level, price in self.fib_levels.items():
-                    if level in fib_colors:
-                        ax1.axhline(y=price, color=fib_colors[level], linestyle='--', linewidth=1)
-                        # 添加标签
-                        ax1.text(len(dates) - 1, price, f"{level} ({price:.2f})", 
-                                color=fib_colors[level], verticalalignment='center')
-            
-            # 绘制成交量
-            for i in range(len(dates)):
-                # 成交量颜色和K线一致，上涨为红，下跌为绿
-                if closes.iloc[i] >= opens.iloc[i]:
-                    color = 'red'
-                else:
-                    color = 'green'
-                ax2.bar(i, volumes.iloc[i], width=width, color=color, alpha=0.7)
-            
-            # 添加网格线
-            ax1.grid(True, linestyle=':', alpha=0.3)
-            ax2.grid(True, linestyle=':', alpha=0.3)
-            
-            # 设置轴标签
-            ax1.set_ylabel('价格', fontsize=12)
-            ax2.set_ylabel('成交量', fontsize=12)
-            
-            # 设置x轴刻度和标签
-            # 计算合适的日期刻度
-            n_ticks = min(10, len(dates))
-            step = max(1, len(dates) // n_ticks)
-            date_indices = np.arange(0, len(dates), step)
-            date_labels = [dates[i].strftime('%Y-%m-%d') for i in date_indices if i < len(dates)]
-            plt.xticks(date_indices, date_labels, rotation=45)
-            
-            # 添加波段起止点标注
-            if self.plot_annotations:
+            # 添加波段起止点标注（如果有的话）
+            if fig and len(axes) > 0 and self.plot_annotations:
+                ax1 = axes[0]
                 for ann in self.plot_annotations:
                     date = ann['xy'][0]
                     price = ann['xy'][1]
                     try:
-                        date_idx = self.daily_data.index.get_loc(date)
                         ax1.annotate(
                             ann['text'],
-                            xy=(date_idx, price),
-                            xytext=(date_idx + ann['xytext'][0]/10, price + ann['xytext'][1]/10),
+                            xy=(date, price),
+                            xytext=(ann['xytext'][0]/10, ann['xytext'][1]/10),
+                            textcoords='offset points',
                             arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=-0.2'),
                             fontsize=8,
                             bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.3)
                         )
                     except Exception as e:
                         logger.warning(f"添加标注时出错: {str(e)}")
-            
-            # 添加图例
-            ax1.legend(loc='upper left')
             
             # 根据计算结果生成分析总结文字
             summary_text = self.generate_analysis_summary()
@@ -503,6 +391,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         # 判断当前价格所处的位置
         current_level = None
         next_level = None
+        next_price = 0
         
         # 将所有水平按价格排序
         sorted_levels = sorted(self.fib_levels.items(), key=lambda x: x[1])
@@ -515,7 +404,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         
         # 构建分析文本
         if current_level:
-            price_diff = (next_price - current_price) / current_price * 100 if 'next_price' in locals() else 0
+            price_diff = (next_price - current_price) / current_price * 100
             summary = (
                 f"{self.stock_name}({self.stock_code})当前价格 {current_price:.2f} 位于 {current_level} 水平之上，"
                 f"下一个阻力位是 {next_level} ({next_price:.2f})，距离当前价格约 {price_diff:.2f}%。"
@@ -544,7 +433,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         
         return summary
     
-    def run_analysis(self) -> Dict:
+    def run_analysis(self, save_path=None) -> Dict:
         """
         执行分析流程
         
@@ -583,7 +472,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         })
         
         # 绘制图表
-        chart_success = self.plot_chart()
+        chart_success = self.plot_chart(save_path)
         
         if not chart_success:
             self.analysis_result['chart_error'] = '绘制图表失败'
