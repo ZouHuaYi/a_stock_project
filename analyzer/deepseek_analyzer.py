@@ -205,20 +205,23 @@ class DeepseekAnalyzer(BaseAnalyzer):
         save_path = os.path.join(self.save_path, save_filename)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         try:
-            plot_days = min(60, len(self.daily_data))
-            plot_df = self.daily_data.iloc[-plot_days:].copy()
+            plot_df = self.daily_data.copy()
             title = f'{self.stock_name}({self.stock_code}) 技术分析'
             
-            fig, axes = plot_stock_chart(
-                plot_df, 
+            plot_bool = plot_stock_chart(
+                df=plot_df, 
+                indicators=self.indicators,
                 title=title, 
                 save_path=save_path,
                 plot_ma=True, 
                 plot_volume=True, 
+                plot_macd=True,
+                plot_kdj=True,
+                plot_rsi=True,
                 plot_boll=True
             )
             
-            if 'analysis_result' in self.__dict__ and isinstance(self.analysis_result, dict):
+            if plot_bool:
                 self.analysis_result.update({'chart_path': save_path})
             
             logger.info(f"技术分析图表已保存至: {save_path}")

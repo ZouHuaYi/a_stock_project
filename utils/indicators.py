@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """股票技术指标计算工具模块"""
 
+from venv import logger
 import pandas as pd
 import pandas_ta as ta
 import numpy as np
@@ -326,118 +327,110 @@ def calculate_support_resistance(df: pd.DataFrame, period: int = 20) -> Dict[str
     
     return {'support': supports, 'resistance': resistances}
 
-def plot_stock_chart(df: pd.DataFrame, title: str = None, save_path: str = None, 
-                   plot_ma: bool = True, plot_volume: bool = True, 
-                   plot_boll: bool = False, plot_fib: Dict = None) -> Tuple[plt.Figure, List[plt.Axes]]:
+def plot_stock_chart(df: pd.DataFrame, 
+                     indicators: Dict,
+                     title: str = None, 
+                     save_path: str = None, 
+                   plot_ma: bool = True, 
+                   plot_macd: bool = True,
+                   plot_volume: bool = True, 
+                   plot_kdj: bool = True,
+                   plot_rsi: bool = True,
+                   plot_boll: bool = True
+                  ) -> bool:
     """
     通用股票图表绘制函数
     
     参数:
         df (pd.DataFrame): 股票数据，需要包含OHLC和技术指标
+        indicators (Dict): 技术指标字典
         title (str): 图表标题
         save_path (str): 保存路径
         plot_ma (bool): 是否绘制移动平均线
         plot_volume (bool): 是否绘制成交量
+        plot_macd (bool): 是否绘制MACD指标
+        plot_kdj (bool): 是否绘制KDJ指标
+        plot_rsi (bool): 是否绘制RSI指标
         plot_boll (bool): 是否绘制布林带
-        plot_fib (Dict): 斐波那契回调级别字典
-        
     返回:
-        Tuple[plt.Figure, List[plt.Axes]]: 图表对象和轴对象列表
+        bool: 是否成功绘制图表
     """
     if df.empty:
-        return None, []
+        return False
     
     # 设置中文字体
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
     
     # 创建图表
-    fig = plt.figure(figsize=(16, 10))
+    plt.figure(figsize=(15, 25))
+    plt.title(title)
+    # 确保所有指标与数据索引对齐,空出
+    data_indices = df.index
     
-    if plot_volume:
-        gs = plt.GridSpec(4, 1, height_ratios=[3, 1, 1, 1])
-        ax1 = plt.subplot(gs[0])
-        ax2 = plt.subplot(gs[1])
-        axes = [ax1, ax2]
-    else:
-        gs = plt.GridSpec(1, 1)
-        ax1 = plt.subplot(gs[0])
-        axes = [ax1]
-    
-    # 绘制K线图
-    dates = df.index
-    
-    # 设置标题
-    if title:
-        fig.suptitle(title, fontsize=16)
-    
-    # 绘制收盘价
-    ax1.plot(dates, df['close'], label='收盘价', color='black', linewidth=1.5)
-    
-    # 绘制移动平均线
     if plot_ma:
-        if 'MA5' in df.columns:
-            ax1.plot(dates, df['MA5'], label='MA5', color='red', linewidth=1)
-        if 'MA10' in df.columns:
-            ax1.plot(dates, df['MA10'], label='MA10', color='blue', linewidth=1)
-        if 'MA20' in df.columns:
-            ax1.plot(dates, df['MA20'], label='MA20', color='green', linewidth=1)
-        if 'MA60' in df.columns:
-            ax1.plot(dates, df['MA60'], label='MA60', color='purple', linewidth=1)
+        # 价格和移动平均线
+        plt.subplot(6, 1, 1)
+        # 画蜡烛图 
+        plt.plot(data_indices, df['close'], label='收盘价')
+        plt.plot(data_indices, df['MA5'].reindex(data_indices), label='5日均线')
+        plt.plot(data_indices, df['MA10'].reindex(data_indices), label='10日均线')
+        plt.plot(data_indices, df['MA20'].reindex(data_indices), label='20日均线')
+        plt.plot(data_indices, df['MA60'].reindex(data_indices), label='60日均线')
+        plt.title(f'{title} 价格走势')
+        plt.legend()
+
+    if plot_macd:
+        # MACD
+        plt.subplot(6, 1, 2)
+        plt.plot(data_indices, indicators['MACD'].reindex(data_indices), label='MACD')
+        plt.plot(data_indices, indicators['MACD_signal'].reindex(data_indices), label='信号线')
+        plt.bar(data_indices, indicators['MACD_hist'].reindex(data_indices), label='MACD柱状图')
+        plt.title('MACD指标')
+        plt.legend()
+
+    if plot_volume:
+        # 成交量
+        plt.subplot(6, 1, 3)
+        plt.bar(data_indices, df['volume'], label='成交量')
+        plt.title(f'{title} 成交量')
+        plt.legend()
+
+    if plot_kdj:
+        # KDJ
+        plt.subplot(6, 1, 4)
+        plt.plot(data_indices, df['KDJ_K'].reindex(data_indices), label='K值')
+        plt.plot(data_indices, df['KDJ_D'].reindex(data_indices), label='D值')
+        plt.plot(data_indices, df['KDJ_J'].reindex(data_indices), label='J值')
+        plt.axhline(y=80, color='r', linestyle='--')
+        plt.axhline(y=20, color='g', linestyle='--')
+        plt.title('KDJ指标')
+        plt.legend()
+
+    if plot_rsi:
+        # RSI
+        plt.subplot(6, 1, 5)
+        plt.plot(data_indices, indicators['RSI_6'].reindex(data_indices), label='6日RSI')
+        plt.plot(data_indices, indicators['RSI_12'].reindex(data_indices), label='12日RSI')
+        plt.axhline(y=70, color='r', linestyle='--')
+        plt.axhline(y=30, color='g', linestyle='--')
+        plt.title('相对强弱指数(RSI)')
+        plt.legend()
+
+    if plot_boll:
+        # 布林带
+        plt.subplot(6, 1, 6)
+        plt.plot(data_indices, indicators['BB_upper'].reindex(data_indices), label='BOLL上轨')
+        plt.plot(data_indices, indicators['BB_middle'].reindex(data_indices), label='BOLL中轨')
+        plt.plot(data_indices, indicators['BB_lower'].reindex(data_indices), label='BOLL下轨')
+        plt.title('布林带')
+        plt.legend()
     
-    # 绘制布林带
-    if plot_boll and 'BOLL_MID' in df.columns:
-        ax1.plot(dates, df['BOLL_MID'], label='BOLL中轨', color='blue', linestyle='--', linewidth=1)
-        ax1.plot(dates, df['BOLL_UP'], label='BOLL上轨', color='red', linestyle='--', linewidth=1)
-        ax1.plot(dates, df['BOLL_DOWN'], label='BOLL下轨', color='green', linestyle='--', linewidth=1)
-        ax1.fill_between(dates, df['BOLL_DOWN'], df['BOLL_UP'], alpha=0.1, color='gray')
-    
-    # 绘制斐波那契回调线
-    if plot_fib and plot_fib:
-        fib_colors = {
-            'Fib 23.6%': 'orange',
-            'Fib 38.2%': 'gold',
-            'Fib 50.0%': 'green',
-            'Fib 61.8%': 'red',
-            'Fib 78.6%': 'purple',
-            'Fib 100% (Low)': 'blue',
-            'Fib 161.8%': 'brown',
-            'Fib 261.8%': 'darkred'
-        }
-        
-        for level, price in plot_fib.items():
-            if level in fib_colors:
-                ax1.axhline(y=price, color=fib_colors[level], linestyle='--', alpha=0.7, linewidth=1)
-                # 添加标签
-                ax1.text(dates[-1], price, f"{level} ({price:.2f})", 
-                        color=fib_colors[level], verticalalignment='center')
-    
-    # 绘制成交量
-    if plot_volume and len(axes) > 1:
-        # 成交量颜色：涨为红，跌为绿
-        colors = ['red' if df['close'].iloc[i] >= df['open'].iloc[i] else 'green' 
-                 for i in range(len(df))]
-        ax2.bar(dates, df['volume'], color=colors, alpha=0.7)
-        
-        if 'VOL_MA5' in df.columns:
-            ax2.plot(dates, df['VOL_MA5'], color='blue', label='5日均量')
-        
-        ax2.set_ylabel('成交量')
-        ax2.grid(True, linestyle='--', alpha=0.3)
-        ax2.legend(loc='upper left')
-    
-    # 设置轴标签和网格
-    ax1.set_ylabel('价格')
-    ax1.grid(True, linestyle='--', alpha=0.3)
-    ax1.legend(loc='best')
-    
-    # 调整x轴日期格式
-    plt.xticks(rotation=45)
     plt.tight_layout()
-    
-    # 保存图表
+        
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-    
-    return fig, axes 
+        plt.savefig(save_path)
+        return True
+    else:
+        plt.show()
+        return False

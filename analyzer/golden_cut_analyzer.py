@@ -240,9 +240,11 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 self.daily_data,
                 title=title,
                 save_path=None,  # 暂不保存，后面添加标注后再保存
+                plot_fib=True,
                 plot_ma=True,
                 plot_volume=True,
-                plot_fib=self.fib_levels
+                fib=self.fib_levels,
+                annotations=self.plot_annotations
             )
             
             # 添加波段起止点标注
