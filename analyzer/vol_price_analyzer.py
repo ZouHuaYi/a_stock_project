@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 class VolPriceAnalyzer(BaseAnalyzer):
     """量价关系分析器类，用于识别股票的洗盘、拉升等特征"""
     
-    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, days: int = 60):
+    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, days: int = 365):
         """
         初始化量价关系分析器
         
@@ -30,7 +30,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             stock_code (str): 股票代码
             stock_name (str, 可选): 股票名称，如不提供则通过基类获取
             end_date (str 或 datetime, 可选): 结束日期，默认为当前日期
-            days (int, 可选): 回溯天数，默认60天
+            days (int, 可选): 回溯天数，默认365天
         """
         super().__init__(stock_code, stock_name, end_date, days)
     
@@ -129,9 +129,6 @@ class VolPriceAnalyzer(BaseAnalyzer):
         返回:
             dict: 分析结果
         """
-        if not self.fetch_data():
-            return {'status': 'error', 'message': '数据准备失败'}
-        
         # 获取最近数据
         last_data = self.daily_data.iloc[-1]
         patterns = self.detect_wash_patterns()
@@ -376,9 +373,6 @@ class VolPriceAnalyzer(BaseAnalyzer):
         返回:
             dict: 分析结果
         """
-        if self.get_stock_daily_data().empty:
-            return {'status': 'error', 'message': '获取数据失败'}
-        
         # 先尝试准备数据
         if not self.fetch_data():
             return {'status': 'error', 'message': '数据准备失败', 'patterns': []}
