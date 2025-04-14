@@ -71,7 +71,7 @@ python run.py analyze volprice 000001 --days 60
 ```
 
 参数说明：
-- `volprice`：分析器类型，可选 volprice(量价分析)、golden(黄金分割分析)、deepseek(DeepSeek AI分析)
+- `volprice`：分析器类型，可选 volprice(量价分析)、golden(黄金分割分析)、openai(AI分析)
 - `000001`：股票代码
 - `--days`：回溯数据天数
 - `--end-date`：结束日期，格式：YYYY-MM-DD
@@ -160,9 +160,9 @@ a_stock_project/
 - 生成带有斐波那契水平的K线图
 - 分析当前价格相对于斐波那契水平的位置
 
-### DeepSeek分析器 (DeepseekAnalyzer)
+### openai分析器 (DeepseekAnalyzer)
 
-利用DeepSeek大模型进行股票的深度分析，结合技术指标和基本面数据，提供更全面的分析报告。
+利用openai大模型进行股票的深度分析，结合技术指标和基本面数据，提供更全面的分析报告。
 
 功能：
 - 综合技术指标分析

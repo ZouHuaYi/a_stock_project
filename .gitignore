@@ -3,7 +3,7 @@ venv
 .env
 __pycache__
 caches/*
-config/*
+config/default_config.py
 datas/*
 *.pyc
 *.pyo
