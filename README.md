@@ -35,7 +35,8 @@ CREATE DATABASE stock_data_news CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
 
 4. 更新配置：
 
-编辑 `config/default_config.py` 文件，更新数据库连接配置和其他设置。
+将 `config/default_config.py` 文件改名为 `config/default_config.py`，
+更新数据库连接配置和其他设置，更新配置 AI 模型的配置。
 
 ## 使用方法
 
