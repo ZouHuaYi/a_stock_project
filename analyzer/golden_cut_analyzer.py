@@ -55,7 +55,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 return False
             self.stock_name = self.get_stock_name()
             self.daily_data['stock_name'] = self.stock_name
-            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
+            self.daily_data, indicators = calculate_technical_indicators(self.daily_data)
             return True
                 
         except Exception as e:
@@ -69,14 +69,10 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         返回:
             bool: 是否成功计算
         """
-        if self.daily_data is None or self.daily_data.empty:
-            logger.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
-            return False
-        
         try:
             # 使用指标工具计算斐波那契水平
             self.fib_levels = calculate_fibonacci_levels(self.daily_data, use_swing=True)
-            
+    
             if not self.fib_levels:
                 logger.warning(f"未能计算有效的斐波那契回调水平")
                 return False
@@ -307,12 +303,12 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 return {'status': 'error', 'message': '计算斐波那契回调水平失败'}
             
             # 绘制图表
-            chart_path = ""
-            if self.plot_chart():
-                if save_path:
-                    chart_path = os.path.join(self.save_path, f"{save_path}.png")
-                else:
-                    chart_path = os.path.join(self.save_path, f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.png")
+            # chart_path = ""
+            # if self.plot_chart():
+            #     if save_path:
+            #         chart_path = os.path.join(self.save_path, f"{save_path}.png")
+            #     else:
+            #         chart_path = os.path.join(self.save_path, f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.png")
             
             # 生成分析摘要
             analysis_summary = self.generate_analysis_summary()
