@@ -170,7 +170,7 @@ def handle_analyze(args):
         
         if result:
             # 输出图表路径
-            logger.info(f"图表已保存至: {output_file}")
+            logger.info(f"处理完成")
         else:
             logger.error("分析失败，未返回结果")
     except Exception as e:

@@ -104,7 +104,7 @@ class BaseAnalyzer:
             akshare = AkshareAPI()
             
             # 获取历史数据
-            years = self.days // 365 + 1  # 向上取整，确保获取足够的数据
+            years = self.days // 365 # 向上取整，确保获取足够的数据
             
             df = akshare.get_stock_history(
                 stock_code=self.stock_code,

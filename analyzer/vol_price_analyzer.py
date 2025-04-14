@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Union, Any
 # 导入基础分析器和工具
 from analyzer.base_analyzer import BaseAnalyzer
 from config import ANALYZER_CONFIG, PATH_CONFIG
+from utils.indicators import calculate_technical_indicators
 from utils.logger import get_logger
 
 # 创建日志记录器
@@ -33,28 +34,21 @@ class VolPriceAnalyzer(BaseAnalyzer):
         """
         super().__init__(stock_code, stock_name, end_date, days)
     
-    def prepare_data(self):
+    def fetch_data(self):
         """
-        准备数据，计算各种量价指标
+        获取股票数据
         
         返回:
-            bool: 是否成功准备数据
+            bool: 是否成功获取数据
         """
-        if self.daily_data is None or self.daily_data.empty:
-            logger.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
-            return False
-        
         try:
-            # 计算移动平均线
-            self.daily_data.loc[:, 'MA5'] = self.daily_data['close'].rolling(window=5).mean()
-            self.daily_data.loc[:, 'MA10'] = self.daily_data['close'].rolling(window=10).mean()
-            self.daily_data.loc[:, 'MA20'] = self.daily_data['close'].rolling(window=20).mean()
-            self.daily_data.loc[:, 'MA30'] = self.daily_data['close'].rolling(window=30).mean()
-            
-            # 计算成交量移动平均
-            self.daily_data.loc[:, 'VOL_MA5'] = self.daily_data['volume'].rolling(window=5).mean()
-            self.daily_data.loc[:, 'VOL_MA10'] = self.daily_data['volume'].rolling(window=10).mean()
-            
+            self.daily_data = self.get_stock_daily_data()
+            if self.daily_data.empty:
+                return False
+            self.stock_name = self.get_stock_name()
+            self.daily_data['stock_name'] = self.stock_name
+            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
+
             # 计算量比（当日成交量/5日平均成交量）
             self.daily_data['volume_ratio'] = self.daily_data['volume'] / self.daily_data['VOL_MA5']
             
@@ -135,7 +129,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
         返回:
             dict: 分析结果
         """
-        if not self.prepare_data():
+        if not self.fetch_data():
             return {'status': 'error', 'message': '数据准备失败'}
         
         # 获取最近数据
@@ -386,7 +380,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             return {'status': 'error', 'message': '获取数据失败'}
         
         # 先尝试准备数据
-        if not self.prepare_data():
+        if not self.fetch_data():
             return {'status': 'error', 'message': '数据准备失败', 'patterns': []}
         
         # 分析量价关系

@@ -99,11 +99,6 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             except Exception as e:
                 logger.warning(f"计算波段端点时出错: {str(e)}")
                 
-            # 打印计算结果
-            logger.info("计算得到的斐波那契回调位:")
-            for label, price in self.fib_levels.items():
-                logger.info(f"  {label}: {price:.2f}")
-                
             return True
                 
         except Exception as e:
@@ -164,17 +159,17 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             # K线绘制逻辑
             for i in range(len(dates)):
                 # 绘制K线
-                if closes[i] >= opens[i]:
+                if closes.iloc[i] >= opens.iloc[i]:
                     color = 'red'
-                    body_height = closes[i] - opens[i]
-                    body_bottom = opens[i]
+                    body_height = closes.iloc[i] - opens.iloc[i]
+                    body_bottom = opens.iloc[i]
                 else:
                     color = 'green'
-                    body_height = opens[i] - closes[i]
-                    body_bottom = closes[i]
+                    body_height = opens.iloc[i] - closes.iloc[i]
+                    body_bottom = closes.iloc[i]
 
                 # 绘制影线
-                ax1.plot([i, i], [lows[i], highs[i]], color=color, linewidth=1)
+                ax1.plot([i, i], [lows.iloc[i], highs.iloc[i]], color=color, linewidth=1)
                 
                 # 绘制实体
                 if body_height == 0:  # 开盘=收盘的情况
@@ -195,20 +190,33 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             ax1.plot(x, ma20, label='20日均线', color='green')
             ax1.plot(x, ma60, label='60日均线', color='red')
 
-            # 设置x轴刻度标签
-            ax1.set_xticks(date_ticks)
-            ax1.set_xticklabels(date_labels, rotation=45)
+            fib_colors = {
+                'Fib 38.2%': 'orange',
+                'Fib 50.0%': 'yellowgreen',
+                'Fib 61.8%': 'green',
+                'Fib 100% (Low)': 'lightblue',
+                'Fib 161.8%': 'red',
+                'Fib 200%': 'blue',
+                'Fib 261.8%': 'purple'
+            }
+            # 绘制斐波那契回调水平
+            for level, price in self.fib_levels.items():
+                if level in fib_colors:
+                    ax1.axhline(y=price, color=fib_colors[level], linestyle='--', linewidth=1)
+                    # 添加标签
+                    ax1.text(len(dates) - 1, price, f"{level} ({price:.2f})", 
+                            color=fib_colors[level], verticalalignment='center')
 
             # 绘制成交量
             for i in range(len(dates)):
                 # 成交量颜色和K线一致，上涨为红，下跌为绿
-                if closes[i] >= opens[i]:
+                if closes.iloc[i] >= opens.iloc[i]:
                     color = 'red'
                 else:
                     color = 'green'
-                ax2.bar(i, volumes[i], width=width, color=color, alpha=0.7)
+                ax2.bar(i, volumes.iloc[i], width=width, color=color, alpha=0.7)
 
-             # 添加网格线
+            # 添加网格线
             ax1.grid(True, linestyle=':', alpha=0.3)
             ax2.grid(True, linestyle=':', alpha=0.3)
             
@@ -363,10 +371,6 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             if not self.fetch_data():
                 return {'status': 'error', 'message': '获取股票数据失败'}
             
-            # 计算技术指标
-            if not self.prepare_data():
-                return {'status': 'error', 'message': '准备数据失败'}
-            
             # 计算斐波那契回调水平
             if not self.calculate_fibonacci_levels():
                 return {'status': 'error', 'message': '计算斐波那契回调水平失败'}
@@ -387,11 +391,13 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 'chart_path': chart_path,
                 'description': analysis_summary
             }
-            print(analysis_summary)
-            
-            # 保存分析结果
-            self.analysis_result = result
-            
+          
+            path_txt = os.path.join(self.save_path, f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.txt")
+            # 保存分析结果到 txt 文件，处理中文乱码问题
+            with open(path_txt, 'w', encoding='utf-8') as f:
+                f.write(analysis_summary)
+                logger.info(f"斐波那契回调分析结果已保存至: {path_txt}")
+
             logger.info(f"{self.stock_code} ({self.stock_name}) 斐波那契分析完成")
             return result
             
