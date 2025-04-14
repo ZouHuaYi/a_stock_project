@@ -40,6 +40,12 @@ CREATE DATABASE stock_data_news CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
 
 ## 使用方法
 
+### 查看命令
+```bash
+python run.py -h
+python run.py update -h
+```
+
 ### 初始化数据
 
 首次使用前，请更新股票数据：

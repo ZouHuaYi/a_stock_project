@@ -397,7 +397,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             with open(path_txt, 'w', encoding='utf-8') as f:
                 f.write(analysis_summary)
                 logger.info(f"斐波那契回调分析结果已保存至: {path_txt}")
-
+            self.save_analysis_result(result)
             logger.info(f"{self.stock_code} ({self.stock_name}) 斐波那契分析完成")
             return result
             

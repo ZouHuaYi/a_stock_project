@@ -35,14 +35,14 @@ def parse_args():
     
     # 分析子命令
     analyze_parser = subparsers.add_parser('analyze', help='股票分析功能')
-    analyze_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'deepseek'], 
+    analyze_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'openai'], 
                                default='volprice', nargs='?', help='分析器类型')
     analyze_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
     analyze_parser.add_argument('--days', type=int, help='回溯数据天数')
     analyze_parser.add_argument('--end-date', help='结束日期，格式：YYYY-MM-DD')
     analyze_parser.add_argument('--save-chart', action='store_true', default=True, help='保存图表')
     analyze_parser.add_argument('--output', help='输出文件名(不含扩展名)')
-    analyze_parser.add_argument('--ai-type', choices=['gemini', 'deepseek'], help='AI类型')
+    analyze_parser.add_argument('--ai-type', choices=['gemini', 'openai'], help='AI类型')
     
     # 更新数据子命令
     update_parser = subparsers.add_parser('update', help='更新股票数据')
@@ -143,7 +143,7 @@ def handle_analyze(args):
                 end_date=args.end_date, 
                 days=args.days
             )
-        elif analyzer_type == 'deepseek':
+        elif analyzer_type == 'openai':
             from analyzer.ai_analyzer import AiAnalyzer
             if args.ai_type:
                 ai_type = args.ai_type
