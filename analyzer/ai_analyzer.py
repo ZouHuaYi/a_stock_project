@@ -28,11 +28,11 @@ plt.rcParams['axes.unicode_minus'] = False
 # 创建日志记录器
 logger = get_logger(__name__)
 
-class DeepseekAnalyzer(BaseAnalyzer):
+class AiAnalyzer(BaseAnalyzer):
     """深度学习分析器类，用于使用大语言模型进行股票综合分析"""
     
     def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
-                 days: int = 365, ai_type: str = "deepseek"):
+                 days: int = 365, ai_type: str = "openai"):
         """
         初始化AI分析器
         
@@ -41,7 +41,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
             stock_name (str, 可选): 股票名称，如不提供则通过基类获取
             end_date (str 或 datetime, 可选): 结束日期，默认为当前日期
             days (int, 可选): 回溯天数，默认365天
-            ai_type (str, 可选): AI模型类型，如 "deepseek", "gemini" 等
+            ai_type (str, 可选): AI模型类型，如 "openai", "gemini" 等
         """
         super().__init__(stock_code, stock_name, end_date, days)
         self.ai_type = ai_type
@@ -296,7 +296,7 @@ class DeepseekAnalyzer(BaseAnalyzer):
             """
             llm_api = LLMAPI()
             # 使用AI模型进行分析
-            if self.ai_type == "deepseek":
+            if self.ai_type == "openai":
                 analysis_report = llm_api.generate_openai_response(prompt)
             elif self.ai_type == "gemini":
                 analysis_report = llm_api.generate_gemini_response(prompt)

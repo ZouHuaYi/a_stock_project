@@ -49,106 +49,17 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             bool: 是否成功获取数据
         """
         try:
-            # 获取股票名称(如果未提供)
-            if not self.stock_name or self.stock_name == self.stock_code:
-                self.get_stock_name()
-            
-            # 获取股票日线数据
+            # 从AkShare获取股票日线数据
             self.daily_data = self.get_stock_daily_data()
-            
             if self.daily_data.empty:
-                logger.error(f"未能获取到股票 {self.stock_code} 的日线数据")
                 return False
-            
-            # 确保日期成为索引，并且数据已排序
-            if 'trade_date' in self.daily_data.columns:
-                self.daily_data.set_index('trade_date', inplace=True)
-            
-            self.daily_data.sort_index(inplace=True)
-            
-            # 确保数据类型正确
-            for col in ['open', 'close', 'high', 'low', 'volume']:
-                if col in self.daily_data.columns:
-                    self.daily_data[col] = pd.to_numeric(self.daily_data[col], errors='coerce')
-            
-            logger.info(f"成功获取 {self.stock_code} ({self.stock_name}) 的数据")
+            self.stock_name = self.get_stock_name()
+            self.daily_data['stock_name'] = self.stock_name
+            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
             return True
                 
         except Exception as e:
             logger.error(f"获取数据时出错: {str(e)}")
-            return False
-    
-    def _create_mock_data(self) -> bool:
-        """
-        创建模拟数据，用于测试
-        
-        返回:
-            bool: 是否成功创建模拟数据
-        """
-        try:
-            # 创建日期范围
-            start_date = self.start_date.date()
-            end_date = self.end_date.date()
-            date_range = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)
-                         if (start_date + timedelta(days=i)).weekday() < 5]  # 排除周末
-            
-            # 创建价格数据
-            np.random.seed(42)  # 固定随机种子以便测试
-            
-            # 模拟一个趋势运动 + 随机波动
-            n = len(date_range)
-            trend = np.linspace(0, 30, n) + np.sin(np.linspace(0, 4*np.pi, n)) * 10
-            noise = np.random.normal(0, 1, n)
-            price_series = 100 + trend + noise
-            
-            # 计算各价格
-            opens = price_series + np.random.normal(0, 0.5, n)
-            highs = np.maximum(price_series, opens) + np.random.uniform(0.5, 2.0, n)
-            lows = np.minimum(price_series, opens) - np.random.uniform(0.5, 2.0, n)
-            closes = price_series + np.random.normal(0, 0.5, n)
-            volumes = np.random.uniform(1000, 10000, n) * (1 + 0.1 * np.sin(np.linspace(0, 8*np.pi, n)))
-            
-            # 创建DataFrame
-            self.daily_data = pd.DataFrame({
-                'open': opens,
-                'high': highs,
-                'low': lows,
-                'close': closes,
-                'volume': volumes
-            }, index=date_range)
-            
-            logger.info(f"成功创建 {self.stock_code} 的模拟数据")
-            return True
-                
-        except Exception as e:
-            logger.error(f"创建模拟数据时出错: {str(e)}")
-            return False
-    
-    def prepare_data(self) -> bool:
-        """
-        准备数据，计算必要的技术指标
-        
-        返回:
-            bool: 是否成功准备数据
-        """
-        if self.daily_data is None or self.daily_data.empty:
-            logger.warning(f"股票{self.stock_code}没有日线数据，将尝试创建模拟数据")
-            if not self._create_mock_data():
-                return False
-        
-        try:
-            # 计算移动平均线等基本指标
-            self.daily_data = calculate_technical_indicators(
-                self.daily_data,
-                ma_periods=[5, 10, 20, 30, 60, 120],
-                vol_periods=[5, 10, 20]
-            )
-            
-            logger.info(f"已为{self.stock_code}计算技术指标")
-            return True
-            
-        except Exception as e:
-            logger.error(f"准备数据时出错: {str(e)}")
             return False
     
     def calculate_fibonacci_levels(self) -> bool:

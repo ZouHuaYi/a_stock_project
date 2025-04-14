@@ -144,13 +144,13 @@ def handle_analyze(args):
                 days=args.days
             )
         elif analyzer_type == 'deepseek':
-            from analyzer.deepseek_analyzer import DeepseekAnalyzer
+            from analyzer.ai_analyzer import AiAnalyzer
             if args.ai_type:
                 ai_type = args.ai_type
             else:
-                ai_type = "gemini"
+                ai_type = "openai"
 
-            analyzer = DeepseekAnalyzer(
+            analyzer = AiAnalyzer(
                 stock_code=stock_code, 
                 end_date=args.end_date, 
                 days=args.days,

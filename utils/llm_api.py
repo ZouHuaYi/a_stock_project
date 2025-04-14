@@ -70,28 +70,4 @@ class LLMAPI:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"DeepSeek API 调用失败: {str(e)}")
-            return ""
-        """
-        生成OpenAI响应
-        
-        参数:
-            prompt (str): 输入提示
-            model (str): 模型名称，默认为gpt-4o
-            
-        返回:
-            str: 模型生成的文本响应
-        """
-        try:
-            client = OpenAI(api_key=self.OPENAI_API_KEY)
-            response = client.chat.completions.create(
-                model=self.OPENAI_MODEL,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1024 * 2,
-                temperature=0.7,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"OpenAI API 调用失败: {str(e)}")
             return "" 
