@@ -197,7 +197,7 @@ class BaseAnalyzer:
         
         try:
             # 计算各种技术指标
-            self.daily_data = calculate_technical_indicators(self.daily_data)
+            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
             logger.info(f"已为{self.stock_code}计算技术指标")
             return True
         except Exception as e:

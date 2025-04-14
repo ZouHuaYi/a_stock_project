@@ -55,7 +55,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 return False
             self.stock_name = self.get_stock_name()
             self.daily_data['stock_name'] = self.stock_name
-            self.daily_data, indicators = calculate_technical_indicators(self.daily_data)
+            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
             return True
                 
         except Exception as e:
@@ -110,7 +110,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
             logger.error(f"计算斐波那契回调水平时出错: {str(e)}")
             return False
     
-    def plot_chart(self, save_filename=None) -> bool:
+    def plot_chart(self, save_filename=None) -> str:
         """
         绘制斐波那契回调图表
         
@@ -141,45 +141,114 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         try:
             # 使用通用绘图函数
             title = f'{self.stock_name}({self.stock_code}) 日线图与斐波那契回调'
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), gridspec_kw={'height_ratios': [3, 1]}, sharex=True)
+            fig.suptitle(title, fontsize=16)
+
+            # 绘制K线图
+            dates = self.daily_data.index
+            opens = self.daily_data['open']
+            highs = self.daily_data['high']
+            lows = self.daily_data['low']
+            closes = self.daily_data['close']
+            volumes = self.daily_data['volume']
+
+
+            # 设置x轴为日期格式
+            date_ticks = np.linspace(0, len(dates) - 1, min(10, len(dates)))
+            date_labels = [dates[int(idx)].strftime('%Y-%m-%d') for idx in date_ticks]
+
+            # 绘制K线
+            width = 0.6  # K线宽度
+            offset = width / 2.0
+
+            # K线绘制逻辑
+            for i in range(len(dates)):
+                # 绘制K线
+                if closes[i] >= opens[i]:
+                    color = 'red'
+                    body_height = closes[i] - opens[i]
+                    body_bottom = opens[i]
+                else:
+                    color = 'green'
+                    body_height = opens[i] - closes[i]
+                    body_bottom = closes[i]
+
+                # 绘制影线
+                ax1.plot([i, i], [lows[i], highs[i]], color=color, linewidth=1)
+                
+                # 绘制实体
+                if body_height == 0:  # 开盘=收盘的情况
+                    body_height = 0.001  # 赋予一个极小值，以便能够显示
+                rect = Rectangle((i - offset, body_bottom), width, body_height, 
+                                facecolor=color, edgecolor=color)
+                ax1.add_patch(rect)
+                
+            # 绘制移动平均线
+            ma5 = self.daily_data['MA5']
+            ma10 = self.daily_data['MA10']
+            ma20 = self.daily_data['MA20']
+            ma60 = self.daily_data['MA60']
+
+            x = np.arange(len(dates))
+            ax1.plot(x, ma5, label='5日均线', color='blue')
+            ax1.plot(x, ma10, label='10日均线', color='orange')
+            ax1.plot(x, ma20, label='20日均线', color='green')
+            ax1.plot(x, ma60, label='60日均线', color='red')
+
+            # 设置x轴刻度标签
+            ax1.set_xticks(date_ticks)
+            ax1.set_xticklabels(date_labels, rotation=45)
+
+            # 绘制成交量
+            for i in range(len(dates)):
+                # 成交量颜色和K线一致，上涨为红，下跌为绿
+                if closes[i] >= opens[i]:
+                    color = 'red'
+                else:
+                    color = 'green'
+                ax2.bar(i, volumes[i], width=width, color=color, alpha=0.7)
+
+             # 添加网格线
+            ax1.grid(True, linestyle=':', alpha=0.3)
+            ax2.grid(True, linestyle=':', alpha=0.3)
             
-            # 调用共享绘图函数
-            fig, axes = plot_stock_chart(
-                self.daily_data,
-                title=title,
-                save_path=None,  # 暂不保存，后面添加标注后再保存
-                plot_fib=True,
-                plot_ma=True,
-                plot_volume=True,
-                fib=self.fib_levels,
-                annotations=self.plot_annotations
-            )
-            
+            # 设置轴标签
+            ax1.set_ylabel('价格 (前复权)')
+            ax2.set_ylabel('成交量')
+
+             # 设置x轴刻度和标签
+            plt.xticks(date_ticks, date_labels, rotation=45)
+            plt.tight_layout()
+
             # 添加波段起止点标注
-            if fig and len(axes) > 0 and self.plot_annotations:
-                ax1 = axes[0]
+            if self.plot_annotations:
+                # 找到日期对应的索引位置
                 for ann in self.plot_annotations:
                     date = ann['xy'][0]
                     price = ann['xy'][1]
+                    date_idx = self.daily_data.index.get_loc(date)
                     ax1.annotate(
                         ann['text'],
-                        xy=(date, price),
-                        xytext=ann['xytext'],
-                        textcoords='offset points',
-                        arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=-0.2'),
-                        fontsize=10,
-                        bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.3)
-                    )
-            
+                    xy=(date_idx, price),
+                    xytext=(date_idx + ann['xytext'][0]/10, price + ann['xytext'][1]/10),
+                    arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=-0.2'),
+                    fontsize=8,
+                    bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.3)
+                )
+
+            # 添加图例
+            ax1.legend(loc='upper left')
+
             # 保存图表
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
             
             logger.info(f"斐波那契回调图表已保存至: {save_path}")
-            return True
+            return save_path
                 
         except Exception as e:
             logger.error(f"绘制图表时出错: {str(e)}")
-            return False
+            return ''
     
     def generate_analysis_summary(self) -> str:
         """
@@ -303,13 +372,8 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 return {'status': 'error', 'message': '计算斐波那契回调水平失败'}
             
             # 绘制图表
-            # chart_path = ""
-            # if self.plot_chart():
-            #     if save_path:
-            #         chart_path = os.path.join(self.save_path, f"{save_path}.png")
-            #     else:
-            #         chart_path = os.path.join(self.save_path, f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.png")
-            
+            chart_path = self.plot_chart()
+           
             # 生成分析摘要
             analysis_summary = self.generate_analysis_summary()
             
@@ -323,6 +387,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 'chart_path': chart_path,
                 'description': analysis_summary
             }
+            print(analysis_summary)
             
             # 保存分析结果
             self.analysis_result = result
