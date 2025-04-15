@@ -64,7 +64,7 @@ class LLMAPI:
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=1024 * 2,
+                max_tokens=1024 * 4,
                 temperature=1,
             )
             return response.choices[0].message.content
