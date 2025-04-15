@@ -34,15 +34,15 @@ def parse_args():
     select_parser.add_argument('--output', help='输出文件名')
     
     # 分析子命令
-    analyze_parser = subparsers.add_parser('analyze', help='股票分析功能')
-    analyze_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'openai'], 
+    analyzer_parser = subparsers.add_parser('analyzer', help='股票分析功能')
+    analyzer_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'openai'], 
                                default='volprice', nargs='?', help='分析器类型')
-    analyze_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
-    analyze_parser.add_argument('--days', type=int, help='回溯数据天数')
-    analyze_parser.add_argument('--end-date', help='结束日期，格式：YYYY-MM-DD')
-    analyze_parser.add_argument('--save-chart', action='store_true', default=True, help='保存图表')
-    analyze_parser.add_argument('--output', help='输出文件名(不含扩展名)')
-    analyze_parser.add_argument('--ai-type', choices=['gemini', 'openai'], help='AI类型')
+    analyzer_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
+    analyzer_parser.add_argument('--days', type=int, help='回溯数据天数')
+    analyzer_parser.add_argument('--end-date', help='结束日期，格式：YYYY-MM-DD')
+    analyzer_parser.add_argument('--save-chart', action='store_true', default=True, help='保存图表')
+    analyzer_parser.add_argument('--output', help='输出文件名(不含扩展名)')
+    analyzer_parser.add_argument('--ai-type', choices=['gemini', 'openai'], help='AI类型')
     
     # 更新数据子命令
     update_parser = subparsers.add_parser('update', help='更新股票数据')
@@ -54,10 +54,10 @@ def parse_args():
     args = parser.parse_args()
     
     # 检查是否缺少必要的参数
-    if args.command == 'analyze':
+    if args.command == 'analyzer':
         # 如果参数不足2个，可能是没有提供股票代码
         if len(sys.argv) < 4:
-            analyze_parser.error("analyze命令需要提供分析器类型和股票代码两个参数")
+            analyzer_parser.error("analyzer命令需要提供分析器类型和股票代码两个参数")
     
     return args
 
@@ -103,7 +103,7 @@ def handle_select(args):
         logger.error(f"执行选股过程中出错: {str(e)}")
 
 
-def handle_analyze(args):
+def handle_analyzer(args):
     """
     处理分析命令
     
@@ -215,8 +215,8 @@ def main():
     # 根据命令执行相应功能
     if args.command == 'select':
         handle_select(args)
-    elif args.command == 'analyze':
-        handle_analyze(args)
+    elif args.command == 'analyzer':
+        handle_analyzer(args)
     elif args.command == 'update':
         handle_update(args)
     else:

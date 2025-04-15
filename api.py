@@ -105,8 +105,8 @@ async def get_stock_list(
     logger.info(f"获取股票列表, limit={limit}, market={market}")
     try:
         # 导入股票数据处理模块
-        from data.stock_data import StockData
-        stock_data = StockData()
+        from data.stock_data import StockDataUpdater
+        stock_data = StockDataUpdater()
         
         # 根据市场过滤股票列表
         if market:
@@ -137,8 +137,8 @@ async def get_stock_detail(
             raise HTTPException(status_code=400, detail=f"股票代码格式无效: {code}，正确格式应为6位数字")
         
         # 导入股票数据处理模块
-        from data.stock_data import StockData
-        stock_data = StockData()
+        from data.stock_data import StockDataUpdater
+        stock_data = StockDataUpdater()
         
         # 获取股票详情
         stock_detail = stock_data.get_stock_detail(code)

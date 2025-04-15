@@ -74,7 +74,7 @@ python run.py select volume --days 120 --threshold 2 --limit 50
 执行量价分析：
 
 ```bash
-python run.py analyze volprice 000001 --days 60
+python run.py analyzer volprice 000001 --days 60
 ```
 
 参数说明：
