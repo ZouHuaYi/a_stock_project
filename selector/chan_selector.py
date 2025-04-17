@@ -51,10 +51,10 @@ class ChanSelector(BaseSelector):
             pd.DataFrame: 股票日线数据
         """
         sql = f"""
-        SELECT trade_date as date, open, high, low, close, volume 
+        SELECT trade_date, open, high, low, close, volume 
         FROM stock_daily 
         WHERE stock_code='{stock_code}' AND trade_date BETWEEN '{start_date}' AND '{end_date}'
-        ORDER BY date
+        ORDER BY trade_date
         """
         try:
             df = self.db_manager.read_sql(sql)
@@ -68,8 +68,8 @@ class ChanSelector(BaseSelector):
                 df[col] = df[col].astype(float)
                 
             # 设置日期索引
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+            df.set_index('trade_date', inplace=True)
             return df
             
         except Exception as e:
@@ -238,7 +238,7 @@ class ChanSelector(BaseSelector):
         
         return signal_score + trend_score + type_scores
 
-    def run_screening(self) -> pd.DataFrame:
+    def run_screening(self, filename: str = None) -> str:
         """
         执行选股流程
         
@@ -307,9 +307,8 @@ class ChanSelector(BaseSelector):
                 
             # 保存结果
             self.results = df_results
-            # self.save_results(df_results)
-            
-            return df_results
+            filepath = self.save_results(df_results, filename)
+            return filepath
         else:
             logger.warning("未找到符合条件的股票")
-            return pd.DataFrame() 
+            return ''

@@ -300,7 +300,7 @@ class VolumeSelector(BaseSelector):
             logger.error(f"获取股票 {stock_code} 名称失败: {str(e)}")
             return stock_code
 
-    def run_screening(self) -> pd.DataFrame:
+    def run_screening(self, filename: str = None) -> str:
         """
         执行选股流程
         
@@ -313,7 +313,7 @@ class VolumeSelector(BaseSelector):
         stocks = self.get_stock_list()
         if stocks.empty:
             logger.error("未能获取股票列表，选股终止")
-            return pd.DataFrame()
+            return ''
             
         logger.info(f"数据库中共有 {len(stocks)} 只股票")
         
@@ -370,9 +370,8 @@ class VolumeSelector(BaseSelector):
                 
             # 保存结果
             self.results = df_results
-            # self.save_results(df_results)
-            
-            return df_results
+            filepath = self.save_results(df_results, filename)
+            return filepath
         else:
             logger.warning("未找到符合条件的股票")
-            return pd.DataFrame()
+            return ''

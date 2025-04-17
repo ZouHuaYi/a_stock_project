@@ -25,7 +25,7 @@ def parse_args():
     subparsers = parser.add_subparsers(dest='command', help='子命令')
     
     # 选股子命令
-    select_parser = subparsers.add_parser('select', help='选股功能')
+    select_parser = subparsers.add_parser('selector', help='选股功能')
     select_parser.add_argument('selector_type', choices=['volume', 'chan'], 
                               default='volume', nargs='?', help='选股器类型')
     select_parser.add_argument('--days', type=int, help='回溯数据天数')
@@ -83,20 +83,15 @@ def handle_select(args):
         else:
             logger.error(f"未知的选股器类型: {selector_type}")
             return
-        
+        # 生成输出文件名
+        if args.output:
+            output_file = args.output
+        else:
+            output_file = f"{selector_type}_selection_{datetime.now().strftime('%Y%m%d')}.csv"
         # 执行选股
-        results = selector.run_screening()
-        
-        # 如果有结果，保存
-        if not results.empty:
-            # 生成输出文件名
-            if args.output:
-                output_file = args.output
-            else:
-                output_file = f"{selector_type}_selection_{datetime.now().strftime('%Y%m%d')}.csv"
-            
-            # 保存结果
-            selector.save_results(results, output_file)
+        filepath = selector.run_screening(output_file)
+        if filepath:
+            logger.info(f"选股结果已保存到: {filepath}")
         else:
             logger.warning("选股结果为空")
     except Exception as e:
@@ -213,7 +208,7 @@ def main():
     args = parse_args()
     print(args)
     # 根据命令执行相应功能
-    if args.command == 'select':
+    if args.command == 'selector':
         handle_select(args)
     elif args.command == 'analyzer':
         handle_analyzer(args)

@@ -1,104 +1,237 @@
-# 多级别缠论分析与交易策略系统
+# A股选股与分析工具
 
-基于AKShare数据的多级别缠论分析框架，实现了缠论分型、笔、线段、中枢的识别，以及多级别联立分析和交易信号生成。
+这是一个基于Python的A股选股与分析工具，可以帮助您分析股票的量价关系，进行选股和评估股票的投资价值。该工具提供命令行界面，方便在终端中使用。
 
 ## 功能特点
 
-- **多周期数据获取**：支持日线、30分钟、5分钟、1分钟等多个级别的数据
-- **中枢自动识别**：实现了基于缠论标准的中枢识别逻辑
-- **多级别联立分析**：高级别趋势与低级别买卖点联动验证
-- **趋势强度矩阵**：构建4x4趋势状态矩阵，整合多级别分析结果
-- **自动交易信号**：根据多级别联立状态生成买卖建议
-- **图表可视化**：绘制带有分型、笔、线段、中枢标记的K线图
-- **风控位计算**：智能设置止损位置，基于中枢边界
+- **选股功能**：基于量能、技术指标等多种选股策略
+- **股票分析**：支持量价关系分析、黄金分割等多种分析方法
+- **数据管理**：自动获取和更新股票数据
+- **图表生成**：生成专业的技术分析图表
+- **命令行接口**：方便的命令行操作
 
-## 安装依赖
+## 安装说明
 
-```bash
-pip install akshare pandas numpy matplotlib mplfinance
-```
-
-## 快速开始
-
-### 基本用法
-
-```python
-from analyzer.chan_analyzer import ChanAnalyzer
-
-# 创建分析器实例
-analyzer = ChanAnalyzer(
-    symbol="sh000300",  # 沪深300指数
-    periods=['daily', '30min', '5min'],  # 分析周期
-    end_date=None,  # 默认最新日期
-    data_len_min=1000  # 数据长度
-)
-
-# 运行完整分析
-analyzer.run_full_analysis()
-
-# 获取多级别趋势矩阵
-trend_matrix = analyzer.build_trend_matrix()
-print(trend_matrix)
-
-# 生成交易信号
-signal = analyzer.generate_trading_signal()
-print(signal)
-
-# 绘制分析图表
-analyzer.plot_all_requested_levels()
-```
-
-### 使用多级别交易系统
+1. 克隆仓库：
 
 ```bash
-python multi_level_trader.py --symbol sh000300 --periods daily,30min,5min --simulate
+git clone https://github.com/your-username/a_stock_project.git
+cd a_stock_project
+```
+
+2. 安装依赖：
+
+```bash
+pip install -r requirements.txt
+```
+
+3. 配置数据库（MySQL）：
+
+确保您已安装并启动MySQL服务，然后创建数据库：
+
+```sql
+CREATE DATABASE stock_data_news CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+4. 更新配置：
+
+将 `config/default_config.py` 文件改名为 `config/default_config.py`，
+更新数据库连接配置和其他设置，更新配置 AI 模型的配置。
+
+## 使用方法
+
+### 查看命令
+```bash
+python run.py -h
+python run.py update -h
+```
+
+### 初始化数据
+
+首次使用前，请更新股票数据：
+
+```bash
+python run.py update [--basic] [--daily] [--full]
+```
+
+### 选股功能
+
+执行量能选股：
+
+```bash
+python run.py select volume --days 120 --threshold 2 --limit 50
 ```
 
 参数说明：
-- `--symbol`：股票/指数代码，必须包含市场前缀，如`sh000300`、`sz000001`
-- `--periods`：要分析的周期，用逗号分隔，默认`daily,30min,5min`
-- `--end-date`：分析截止日期，格式YYYYMMDD，默认最新
-- `--simulate`：是否进行模拟交易
-- `--initial-capital`：模拟交易初始资金，默认100000
-- `--use-llm`：是否使用LLM增强分析（需自行实现接口）
+- `volume`：选股器类型，可选 volume(量能选股)、technical(技术选股)、combined(组合选股)
+- `--days`：回溯数据天数
+- `--threshold`：选股分数阈值
+- `--limit`：限制结果数量
+- `--output`：输出文件名
 
-## 多级别联立分析框架
+### 分析功能
 
-系统基于以下缠论原理构建：
+执行量价分析：
 
-1. **走势分解原理**：任何走势都可分解为a1A1+a5A5+a30A30形式
-2. **中枢定义**：连续三笔有重叠区域
-3. **趋势定义**：中枢不重叠构成趋势，中枢重叠则升级
-4. **买卖点类型**：
-   - 一买：中枢下方第一个底分型确认
-   - 二买：跌破中枢下轨后回拉确认突破
-   - 三买：中枢上方突破回调不破上轨
-   - 一卖/二卖/三卖：与买点逻辑相反
+```bash
+python run.py analyze volprice 000001 --days 60
+```
 
-## 示例决策逻辑
+参数说明：
+- `volprice`：分析器类型，可选 volprice(量价分析)、golden(黄金分割分析)、openai(AI分析)
+- `000001`：股票代码
+- `--days`：回溯数据天数
+- `--end-date`：结束日期，格式：YYYY-MM-DD
+- `--save-chart`：是否保存图表
+- `--output`：输出文件名(不含扩展名)
 
-| 场景                | 信号组合                          | 操作建议                  | 风险控制               |
-|---------------------|-----------------------------------|---------------------------|------------------------|
-| 日线涨+30分盘整     | 5分三买+1分放量突破               | 半仓介入                  | 跌破30分中枢下沿止损    |
-| 日线跌+30分背驰     | 5分二买+1分底背驰                 | 轻仓抄底                  | 新低止损               |
-| 多级别共振下跌      | 日线三卖+30分三卖+5分弱势反弹     | 持币观望                  | 等待日线底分型         |
+### 更新数据
+
+增量更新股票数据：
+
+```bash
+python run.py update
+```
+
+全量更新股票数据：
+
+```bash
+python run.py update --full
+```
+
+## 输出结果
+
+- 选股结果保存在 `datas/results/` 目录下
+- 分析报告保存在 `datas/reports/` 目录下
+- 图表保存在 `datas/charts/` 目录下
+- 日志保存在 `logs/` 目录下
 
 ## 项目结构
 
 ```
-├── analyzer/
-│   └── chan_analyzer.py    # 缠论核心分析类
-├── multi_level_trader.py   # 多级别交易系统
-└── README.md               # 项目说明
+a_stock_project/
+├── run.py                 # 主入口文件
+├── requirements.txt       # 依赖包列表
+├── README.md              # 项目说明文档
+├── config/                # 配置文件目录
+├── data/                  # 数据访问层
+├── utils/                 # 工具类
+├── selector/              # 选股模块
+├── analyzer/              # 分析模块
+├── cli/                   # 命令行接口
+└── output/                # 输出数据目录
+    ├── charts/            # 图表输出
+    ├── reports/           # 报告输出
+    └── results/           # 选股结果输出
 ```
-
-## 注意事项
-
-- 本系统使用AKShare获取数据，可能需要网络代理
-- 缠论分析为简化实现，仅用于教学和演示
-- 实盘交易前请充分测试并结合其他分析方法
-- 风险自负，投资有风险
 
 ## 许可证
 
-MIT 
+本项目采用 MIT 许可证。详情请参阅 LICENSE 文件。 
+
+# 股票分析工具
+
+## 项目介绍
+
+本项目是一个股票分析工具，提供各种分析器用于分析股票的技术指标和市场行为。项目采用模块化设计，可以轻松扩展新的分析功能。
+
+## 分析器列表
+
+### 基础分析器 (BaseAnalyzer)
+
+基础分析器提供了通用的数据获取和处理功能，所有专用分析器都继承自这个基类。
+
+功能：
+- 获取股票数据（从数据库或API）
+- 获取股票名称和技术指标
+- 保存分析结果到数据库
+- 提供标准化的分析流程
+
+### 量价分析器 (VolPriceAnalyzer)
+
+量价分析器用于分析股票价格和交易量之间的关系，可以检测洗盘特征。
+
+功能：
+- 检测量价关系
+- 识别洗盘特征
+- 分析成交量萎缩、横盘震荡等模式
+- 生成量价关系图
+
+### 黄金分割分析器 (GoldenCutAnalyzer)
+
+黄金分割分析器用于计算斐波那契回调水平，帮助识别可能的支撑位和阻力位。
+
+功能：
+- 识别主要波段的高低点
+- 计算斐波那契回调水平
+- 生成带有斐波那契水平的K线图
+- 分析当前价格相对于斐波那契水平的位置
+
+### openai分析器 (DeepseekAnalyzer)
+
+利用openai大模型进行股票的深度分析，结合技术指标和基本面数据，提供更全面的分析报告。
+
+功能：
+- 综合技术指标分析
+- 获取财务数据和新闻情绪
+- 生成全面分析报告
+- 提供投资建议
+
+## 使用方法
+
+### 黄金分割分析器使用示例
+
+```python
+from analyzer.golden_cut_analyzer import GoldenCutAnalyzer
+
+# 创建分析器实例
+analyzer = GoldenCutAnalyzer(
+    stock_code="600519",  # 股票代码
+    stock_name="贵州茅台",  # 股票名称（可选）
+    end_date="2023-04-10",  # 结束日期（可选，默认为当前日期）
+    days=180  # 回溯天数（可选，默认使用配置值）
+)
+
+# 运行分析
+result = analyzer.run_analysis()
+
+# 输出分析结果
+print(f"分析结果状态: {result['status']}")
+print(f"分析描述: {result['description']}")
+
+if 'chart_path' in result:
+    print(f"图表已保存至: {result['chart_path']}")
+```
+
+## 特性
+
+- **模块化设计**：每个分析器都是独立的模块，可以单独使用或组合使用
+- **标准化接口**：所有分析器遵循相同的接口规范，方便扩展
+- **容错机制**：分析器会处理各种异常情况，确保程序不会崩溃
+- **日志记录**：详细的日志记录，方便调试和追踪问题
+- **数据库支持**：可以将分析结果保存到数据库中，方便查询和共享
+- **模拟数据**：支持使用模拟数据进行测试和开发
+
+## 项目结构
+
+```
+a_stock_project/
+├── analyzer/                  # 分析器模块
+│   ├── base_analyzer.py       # 基础分析器
+│   ├── vol_price_analyzer.py  # 量价分析器
+│   ├── golden_cut_analyzer.py # 黄金分割分析器
+│   └── ai_analyzer.py         # ai分析器
+├── data/                      # 数据相关模块
+│   └── db_manager.py          # 数据库管理器
+├── utils/                     # 工具模块
+│   ├── logger.py              # 日志工具
+│   └── akshare_api.py         # AkShare API封装
+├── config/                    # 配置模块
+│   └── default_config.py      # 默认配置
+├── output/                    # 输出目录
+│   ├── analyzer/              # 量价分析结果
+│   ├── golden_cut/            # 黄金分割分析结果
+│   └── deepseek/              # DeepSeek分析结果
+├── run.py                     # 黄金分割分析器测试脚本
+└── README.md                  # 项目说明文档
+``` 

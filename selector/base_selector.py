@@ -66,15 +66,15 @@ class BaseSelector(ABC):
             str: 保存的文件路径
         """
         # 确保目录存在
-        if not os.path.exists(PATH_CONFIG['results_dir']):
-            os.makedirs(PATH_CONFIG['results_dir'])
+        if not os.path.exists(PATH_CONFIG['selector_path']):
+            os.makedirs(PATH_CONFIG['selector_path'])
             
         # 生成文件名
         if not filename:
             filename = f"stock_selection_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
             
         # 完整路径
-        filepath = os.path.join(PATH_CONFIG['results_dir'], filename)
+        filepath = os.path.join(PATH_CONFIG['selector_path'], filename)
         
         # 保存结果
         results.to_csv(filepath, index=False, encoding='utf-8-sig')
@@ -88,10 +88,7 @@ class BaseSelector(ABC):
         
         参数:
             results (pd.DataFrame, 可选): 选股结果数据框，默认使用self.results
-        """
-        if results is None:
-            results = self.results
-            
+        """  
         if results.empty:
             logger.warning("没有找到符合条件的股票")
             return
