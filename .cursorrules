@@ -26,7 +26,7 @@
 - analyzer 分析股票模块
 - cli 命令行模块
 - config 配置模块
-- data 股票数据模块，股票数据获取，数据清洗，数据存储，使用 akshare、pandas 和 numpy 库
+- data 股票数据模块，股票数据获取，数据清洗，数据存储
 - output 输出文件图片存放的目录
 - logs 日志文件
 - selector 选股模块

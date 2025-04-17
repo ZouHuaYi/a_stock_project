@@ -16,12 +16,11 @@ BASE_CONFIG = {
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH_CONFIG = {
     'log_dir': os.path.join(BASE_DIR, 'logs'),
-    'data_dir': os.path.join(BASE_DIR, 'datas'),
-    'analysis_dir': os.path.join(BASE_DIR, 'datas', 'analysis'),
-    'results_dir': os.path.join(BASE_DIR, 'datas', 'results'),
-    'reports_dir': os.path.join(BASE_DIR, 'datas', 'reports'),
-    'charts_dir': os.path.join(BASE_DIR, 'datas', 'charts'),
-    'temp_dir': os.path.join(BASE_DIR, 'datas', 'temp')
+    'data_dir': os.path.join(BASE_DIR, 'data'),
+    'output_dir': os.path.join(BASE_DIR, 'output'),
+    'analyzer_path': os.path.join(BASE_DIR, 'output', 'analyzer'),
+    'selector_path': os.path.join(BASE_DIR, 'output', 'selector'),
+    'temp_path': os.path.join(BASE_DIR, 'output', 'temp')
 }
 
 # 数据库配置
