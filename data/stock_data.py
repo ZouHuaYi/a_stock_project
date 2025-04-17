@@ -707,7 +707,53 @@ class StockDataUpdater:
         finally:
             # 关闭数据库连接
             self.db_manager.close()
+
+    def update_stock_self_data(self, start_date: str, end_date: str) -> bool:
+        """
+        更新股票指定范围内的日线数据
+        
+        参数:
+            stock_code (str): 股票代码
+            start_date (str): 开始日期，格式：YYYYMMDD
+            end_date (str): 结束日期，格式：YYYYMMDD
             
+        返回:
+            bool: 是否成功更新
+        """
+        logger.info("开始更新股票指定范围内的日线数据")
+
+        try:
+            # 确保表存在
+            if not self._ensure_tables_exist():
+                raise Exception("创建必要的表失败")
+            
+            if start_date is None or end_date is None:
+                raise Exception("开始日期和结束日期不能为空")
+
+            # 获取股票列表
+            stock_list = self._fetch_stock_list()
+            if stock_list.empty:
+                raise Exception("获取股票列表失败")
+
+            # 获取所有股票代码
+            stock_codes = stock_list['stock_code'].tolist()
+            
+            # 测试模式限制股票数量
+            if 'test_stock_limit' in DATA_CONFIG and DATA_CONFIG['test_stock_limit'] > 0:
+                stock_codes = stock_codes[:DATA_CONFIG['test_stock_limit']]
+                logger.info(f"测试模式: 限制处理 {len(stock_codes)} 只股票")
+
+            # 更新股票日线数据
+            updated_count = self._update_stock_daily(stock_codes, start_date, end_date)
+            logger.info(f"更新股票指定范围内的日线数据完成，共更新 {updated_count} 条记录")
+            return True
+        except Exception as e:
+            logger.error(f"更新股票指定范围内的日线数据时出错: {str(e)}")
+            return False
+        finally:
+            # 关闭数据库连接
+            self.db_manager.close()
+
     def full_update(self) -> bool:
         """
         全量更新股票数据

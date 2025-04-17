@@ -243,7 +243,7 @@ class ChanSelector(BaseSelector):
         执行选股流程
         
         返回:
-            pd.DataFrame: 选股结果数据框
+           path: 保存的文件路径
         """
         logger.info("开始执行缠论日线选股分析...")
         

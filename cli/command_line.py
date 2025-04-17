@@ -26,7 +26,7 @@ def parse_args():
     
     # 选股子命令
     select_parser = subparsers.add_parser('selector', help='选股功能')
-    select_parser.add_argument('selector_type', choices=['volume', 'chan'], 
+    select_parser.add_argument('selector_type', choices=['volume', 'chan', 'ma240'], 
                               default='volume', nargs='?', help='选股器类型')
     select_parser.add_argument('--days', type=int, help='回溯数据天数')
     select_parser.add_argument('--threshold', type=float, help='选股分数阈值')
@@ -49,6 +49,9 @@ def parse_args():
     update_parser.add_argument('--full', action='store_true', help='执行全量更新')
     update_parser.add_argument('--basic', action='store_true', help='执行股票基本信息更新')
     update_parser.add_argument('--daily', action='store_true', help='执行股票日线数据更新')
+    update_parser.add_argument('--self', action='store_true', help='执行股票自选数据更新')
+    update_parser.add_argument('--start-date', help='开始日期，格式：YYYYMMDD')
+    update_parser.add_argument('--end-date', help='结束日期，格式：YYYYMMDD')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -80,6 +83,9 @@ def handle_select(args):
         elif selector_type == 'chan':
             from selector.chan_selector import ChanSelector
             selector = ChanSelector(days=args.days, threshold=args.threshold, limit=args.limit)
+        elif selector_type == 'ma240':
+            from selector.ma240_selector import Ma240Selector
+            selector = Ma240Selector(days=args.days, threshold=args.threshold, limit=args.limit)
         else:
             logger.error(f"未知的选股器类型: {selector_type}")
             return
@@ -191,7 +197,8 @@ def handle_update(args):
             success = updater.init_stock_basic()
         elif args.daily:
             success = updater.init_daily_data()
-        
+        elif args.self:
+            success = updater.update_stock_self_data(args.start_date, args.end_date)
         if success:
             logger.info("数据更新成功完成")
         else:
