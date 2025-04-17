@@ -17,9 +17,9 @@ def test_chan_analyzer():
     """测试缠论分析器"""
     
     # 测试股票代码
-    stock_code = "300021"  # 沪深300指数
+    stock_code = "605567"  # 沪深300指数
     end_date = datetime.now()
-    days = 120  # 分析120天数据
+    days = 365  # 分析120天数据
     # 创建分析器实例
     analyzer = ChanMakingAnalyzer(
         stock_code=stock_code,

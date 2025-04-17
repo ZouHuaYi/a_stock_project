@@ -39,7 +39,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
     """
     
     def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
-                 days: int = None, levels: List[str] = None):
+                 days: int = 365, levels: List[str] = None):
         """
         初始化缠论分析器
         
@@ -66,7 +66,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         self.trend_matrix = pd.DataFrame()  # 趋势状态矩阵
         
         # 设置图表保存路径
-        self.chart_path = os.path.join(PATH_CONFIG.get('output_path', './output'), 'chan')
+        self.chart_path = os.path.join(PATH_CONFIG.get('output_path', './output'), 'analyzer')
         os.makedirs(self.chart_path, exist_ok=True)
     
     def get_multi_level_data(self) -> Dict[str, pd.DataFrame]:
@@ -1265,7 +1265,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         
         try:
             # 使用LLM API获取分析
-            llm_result = self.llm_api.query(prompt)
+            llm_result = self.llm_api.generate_openai_response(prompt)
             
             logger.info(f"已使用LLM增强分析结果")
             
@@ -1365,7 +1365,47 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         
         return result
     
-    def run_analysis(self) -> Dict:
+    def output_chan_result(self, result: Dict) -> None:
+        """
+        输出缠论分析结果
+        
+        参数:
+            result (Dict): 缠论分析结果
+        """
+        # 输出缠论分析结果
+        # 将分析结果输出到txt文件
+        output_file = os.path.join(self.chart_path, f"{self.stock_code}_chanMaking_{self.end_date_str}.txt")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(f"\n=== 缠论分析结果摘要 ===\n")
+            f.write(f"股票: {result['stock_name']}({result['stock_code']})\n")
+            f.write(f"分析日期: {self.end_date_str}\n")
+            
+            f.write(f"\n--- 趋势矩阵 ---\n")
+            for level, data in result['trend_matrix'].items():
+                if level == 'index':
+                    continue
+                f.write(f"{level}: 趋势={data.get('trend')}, 信号={data.get('signal')}, 背驰={data.get('beichi')}\n")
+            
+            f.write(f"\n--- 交易信号 ---\n")
+            signal = result['signal']
+            f.write(f"行动: {signal['action']}\n")
+            f.write(f"理由: {signal['reason']}\n")
+            f.write(f"信心度: {signal['confidence']}\n")
+            f.write(f"止损位: {signal['stop_loss']}\n")
+            
+            f.write(f"\n--- 分析图表 ---\n")
+            for level, level_result in result['level_results'].items():
+                chart_path = level_result.get('chart_path', '')
+                if chart_path:
+                    f.write(f"{level}级别图表: {chart_path}\n")
+            
+            if 'llm_analysis' in result and 'result' in result['llm_analysis']:
+                f.write(f"\n--- LLM增强分析 ---\n")
+                f.write(result['llm_analysis']['result'])
+        
+        logger.info(f"分析结果已保存到: {output_file}")
+
+    def run_analysis(self, save_path=None) -> Dict:
         """
         执行完整的缠论分析流程
         
@@ -1408,7 +1448,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         
         # 保存分析结果
         self.save_analysis_result()
-        
+        self.output_chan_result(self.analysis_result)
         logger.info(f"完成{self.stock_code} {self.stock_name}的缠论分析")
         
         return self.analysis_result
