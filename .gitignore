@@ -4,7 +4,7 @@ venv
 __pycache__
 caches/*
 config/default_config.py
-datas/*
+output/*
 *.pyc
 *.pyo
 *.pyd

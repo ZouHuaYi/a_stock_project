@@ -9,8 +9,10 @@ from typing import Dict, List, Optional, Union, Any
 
 # 导入配置和工具
 from config import ANALYZER_CONFIG, PATH_CONFIG
+from utils.llm_api import LLMAPI
 from utils.logger import get_logger
 from utils.indicators import calculate_basic_indicators, calculate_technical_indicators
+from utils.tavily_api import TavilyAPI
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -25,13 +27,15 @@ class BaseAnalyzer:
         参数:
             stock_code (str): 股票代码
             stock_name (str, 可选): 股票名称，如不提供则使用股票代码
-            end_date (str 或 datetime, 可选): 结束日期，默认为当前日期
+            end_date (str 或 datetime, 可选): 结束日期，默认为当前日期 格式是 YYYY-MM-DD
             days (int, 可选): 回溯天数，默认使用配置中的默认值
         """
         self.stock_code = stock_code
         self.stock_name = stock_name if stock_name else stock_code
-        self.daily_data = pd.DataFrame()
-        self.save_path = PATH_CONFIG.get('analysis_path')
+        self.daily_data = pd.DataFrame() # 股票日线数据
+        self.indicators = {} # 技术指标
+        self.tavily_api = TavilyAPI() # 新闻搜索
+        self.llm_api = LLMAPI() # 大模型
         
         # 处理end_date参数
         if end_date:
@@ -47,7 +51,7 @@ class BaseAnalyzer:
             self.end_date = datetime.now()
             
         # 设置回溯天数
-        self.days = days if days is not None else ANALYZER_CONFIG.get('default_days', 365)
+        self.days = days if days is not None else ANALYZER_CONFIG.get('default_days')
         
         # 计算开始日期
         self.start_date = self.end_date - timedelta(days=self.days)
@@ -61,7 +65,7 @@ class BaseAnalyzer:
         self.analysis_result = {}
         
         # 设置统一的保存路径
-        self.save_path = os.path.join("datas", "analysis")
+        self.save_path = PATH_CONFIG.get('analyzer_path')
         os.makedirs(self.save_path, exist_ok=True)
     
     def get_stock_name(self) -> str:
@@ -91,7 +95,7 @@ class BaseAnalyzer:
             logger.error(f"获取股票名称时出错: {str(e)}")
             return self.stock_code
     
-    def get_stock_daily_data(self) -> pd.DataFrame:
+    def get_stock_daily_data(self, period: str = "daily") -> pd.DataFrame:
         """
         从AkShare获取股票日线数据，并计算技术指标
         
@@ -108,18 +112,19 @@ class BaseAnalyzer:
             
             df = akshare.get_stock_history(
                 stock_code=self.stock_code,
-                period="daily",
+                period=period,
                 years=years,
                 adjust="qfq"  # 前复权
             )
-            df.rename(columns={'股票代码': 'stock_code'}, inplace=True)
+            name = akshare.get_stock_name(self.stock_code)
+            # 获取的数据有可能比自己需要的时间长
             if isinstance(df, pd.DataFrame) and not df.empty:
                 # 按照回溯天数筛选
                 if 'trade_date' in df.columns:
                     df = df[(df['trade_date'] >= self.start_date.strftime('%Y-%m-%d')) & 
                            (df['trade_date'] <= self.end_date.strftime('%Y-%m-%d'))]
                     df.set_index('trade_date', inplace=True)
-                
+                df['stock_name'] = name
                 logger.info(f"成功获取 {len(df)} 条 {self.stock_code} 数据")
                 return df
             else:
@@ -130,6 +135,26 @@ class BaseAnalyzer:
             logger.error(f"从AkShare获取股票数据时出错: {str(e)}")
             return pd.DataFrame()
     
+    def prepare_data(self) -> bool:
+        """
+        准备分析数据，计算指标
+        
+        返回:
+            bool: 是否成功准备数据
+        """
+        if self.daily_data is None or self.daily_data.empty:
+            logger.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
+            return False
+        
+        try:
+            # 计算各种技术指标
+            self.daily_data, self.indicators = calculate_technical_indicators(self.daily_data)
+            logger.info(f"已为{self.stock_code}计算技术指标")
+            return True
+        except Exception as e:
+            logger.error(f"准备数据时出错: {str(e)}")
+            return False
+
     def save_analysis_result(self, analysis_result: Dict = None) -> bool:
         """
         保存分析结果到数据库
@@ -182,26 +207,6 @@ class BaseAnalyzer:
                 
         except Exception as e:
             logger.error(f"保存分析结果时出错: {str(e)}")
-            return False
-    
-    def prepare_data(self) -> bool:
-        """
-        准备分析数据，计算指标
-        
-        返回:
-            bool: 是否成功准备数据
-        """
-        if self.daily_data is None or self.daily_data.empty:
-            logger.warning(f"股票{self.stock_code}没有日线数据，请先获取数据")
-            return False
-        
-        try:
-            # 计算各种技术指标
-            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
-            logger.info(f"已为{self.stock_code}计算技术指标")
-            return True
-        except Exception as e:
-            logger.error(f"准备数据时出错: {str(e)}")
             return False
     
     def run_analysis(self) -> Dict:

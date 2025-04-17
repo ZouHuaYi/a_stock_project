@@ -25,110 +25,71 @@ def calculate_technical_indicators(df: pd.DataFrame, ma_periods: List[int] = [5,
         return df
     
     # 确保索引已按日期排序
-    # df = df.sort_index()
+    df = df.sort_index()
     
     indicators = {}
     # 创建结果DataFrame的副本
     result_df = df.copy()
     # 计算移动平均线
     for period in ma_periods:
-        result_df[f'MA{period}'] = result_df['close'].rolling(window=period).mean()
-        # 计算简单移动平均线
-        indicators[f'SMA_{period}'] = result_df.ta.sma(length=period, close='close')
+        result_df[f'MA{period}'] = result_df.ta.sma(length=period, close='close')
+        # 计算简单移动平均线 均线
+        indicators[f'MA{period}'] = result_df[f'MA{period}']
 
     # 计算成交量均线
     for period in vol_periods:
-        result_df[f'VOL_MA{period}'] = result_df['volume'].rolling(window=period).mean()
+        result_df[f'VOL_MA{period}'] = result_df.ta.sma(length=period, close='volume')
+        indicators[f'VOL_MA{period}'] = result_df[f'VOL_MA{period}']
     
     # 计算指数移动平均线
-    result_df['EMA12'] = result_df['close'].ewm(span=12, adjust=False).mean()
-    result_df['EMA26'] = result_df['close'].ewm(span=26, adjust=False).mean()
-    
-    # 计算MACD指标
-    result_df['MACD_DIF'] = result_df['EMA12'] - result_df['EMA26']
-    result_df['MACD_DEA'] = result_df['MACD_DIF'].ewm(span=9, adjust=False).mean()
-    result_df['MACD_BAR'] = 2 * (result_df['MACD_DIF'] - result_df['MACD_DEA'])
+    macd = result_df.ta.macd(fast=12, slow=26, signal=9, close='close')
+    result_df['MACD_DIF'] = macd['MACD_12_26_9']
+    result_df['MACD_DEA'] = macd['MACDs_12_26_9']
+    result_df['MACD_BAR'] = macd['MACDh_12_26_9']
     
     # 计算KDJ指标 - 使用浮点类型初始化
-    result_df['KDJ_K'] = 50.0
-    result_df['KDJ_D'] = 50.0
-    result_df['KDJ_J'] = 50.0
-    
-    # 计算9日内的最低价和最高价
-    low_9 = result_df['low'].rolling(window=9).min()
-    high_9 = result_df['high'].rolling(window=9).max()
-    
-    # 计算KDJ指标，使用loc避免链式赋值警告
-    for i in range(9, len(result_df)):
-        # 计算RSV
-        idx = result_df.index[i]
-        prev_idx = result_df.index[i-1]
-        
-        if high_9.iloc[i] != low_9.iloc[i]:
-            rsv = 100 * (result_df.loc[idx, 'close'] - low_9.iloc[i]) / (high_9.iloc[i] - low_9.iloc[i])
-        else:
-            rsv = 50.0
-            
-        # 计算K值
-        result_df.loc[idx, 'KDJ_K'] = 2/3 * result_df.loc[prev_idx, 'KDJ_K'] + 1/3 * rsv
-        
-        # 计算D值
-        result_df.loc[idx, 'KDJ_D'] = 2/3 * result_df.loc[prev_idx, 'KDJ_D'] + 1/3 * result_df.loc[idx, 'KDJ_K']
-        
-        # 计算J值
-        result_df.loc[idx, 'KDJ_J'] = 3 * result_df.loc[idx, 'KDJ_K'] - 2 * result_df.loc[idx, 'KDJ_D']
-    
+    stoch = result_df.ta.stoch(high='high', low='low', close='close', k=9, d=3, smooth_k=3)
+    result_df['KDJ_K'] = stoch['STOCHk_9_3_3']
+    result_df['KDJ_D'] = stoch['STOCHd_9_3_3']
+    result_df['KDJ_J'] = 3 * result_df['KDJ_K'] - 2 * result_df['KDJ_D']
+   
     # 计算RSI指标
-    delta = result_df['close'].diff()
-    gain = delta.copy()
-    loss = delta.copy()
-    gain[gain < 0] = 0
-    loss[loss > 0] = 0
-    loss = -loss
-    
-    avg_gain_14 = gain.rolling(window=14).mean()
-    avg_loss_14 = loss.rolling(window=14).mean()
-    
-    rs_14 = avg_gain_14 / avg_loss_14
-    result_df['RSI_14'] = 100 - (100 / (1 + rs_14))
-    
+    result_df['RSI_6'] = result_df.ta.rsi(length=6, close='close')
+    result_df['RSI_12'] = result_df.ta.rsi(length=12, close='close')
+    result_df['RSI_14'] = result_df.ta.rsi(length=14, close='close')
+
     # 计算布林带
-    result_df['BOLL_MID'] = result_df['close'].rolling(window=20).mean()
+    result_df['BOLL_MID'] = result_df.ta.sma(length=20, close='close')
     result_df['BOLL_STD'] = result_df['close'].rolling(window=20).std()
     result_df['BOLL_UP'] = result_df['BOLL_MID'] + 2 * result_df['BOLL_STD']
     result_df['BOLL_DOWN'] = result_df['BOLL_MID'] - 2 * result_df['BOLL_STD']
     
     # 计算涨跌幅
     result_df['change_pct'] = result_df['close'].pct_change() * 100
-    
     # 计算成交量变化率
     result_df['volume_ratio'] = result_df['volume'] / result_df['VOL_MA5']
-    
     # 计算振幅
     result_df['amplitude'] = (result_df['high'] - result_df['low']) / result_df['close'].shift(1) * 100
 
     # 相对强弱指数(RSI)
-    indicators['RSI_6'] = result_df.ta.rsi(length=6, close='close')
-    indicators['RSI_12'] = result_df.ta.rsi(length=12, close='close')
-    indicators['RSI_14'] = result_df.ta.rsi(length=14, close='close')
+    indicators['RSI_6'] = result_df['RSI_6']
+    indicators['RSI_12'] = result_df['RSI_12']
+    indicators['RSI_14'] = result_df['RSI_14']
 
-    # MACD
-    macd = result_df.ta.macd(fast=12, slow=26, signal=9, close='close')
-    indicators['MACD'] = macd['MACD_12_26_9']
-    indicators['MACD_signal'] = macd['MACDs_12_26_9']
-    indicators['MACD_hist'] = macd['MACDh_12_26_9']
+    indicators['MACD_DIF'] = result_df['MACD_DIF']
+    indicators['MACD_DEA'] = result_df['MACD_DEA']
+    indicators['MACD_BAR'] = result_df['MACD_BAR']
 
     # KDJ指标
-    stoch = result_df.ta.stoch(high='high', low='low', close='close', k=9, d=3, smooth_k=3)
-    indicators['KDJ_K'] = stoch['STOCHk_9_3_3']
-    indicators['KDJ_D'] = stoch['STOCHd_9_3_3']
-    indicators['KDJ_J'] = 3 * stoch['STOCHk_9_3_3'] - 2 * stoch['STOCHd_9_3_3']
+    indicators['KDJ_K'] = result_df['KDJ_K']
+    indicators['KDJ_D'] = result_df['KDJ_D']
+    indicators['KDJ_J'] = result_df['KDJ_J']
 
-    # 布林带
-    bbands = result_df.ta.bbands(length=20, close='close')
-    indicators['BB_upper'] = bbands['BBU_20_2.0']
-    indicators['BB_middle'] = bbands['BBM_20_2.0']
-    indicators['BB_lower'] = bbands['BBL_20_2.0']
+    # 布林带指标计算
+    indicators['BOLL_MID'] = result_df['BOLL_MID']
+    indicators['BOLL_STD'] = result_df['BOLL_STD']
+    indicators['BOLL_UP'] = result_df['BOLL_UP']
+    indicators['BOLL_DOWN'] = result_df['BOLL_DOWN']
 
     return result_df, indicators
 
@@ -383,9 +344,9 @@ def plot_stock_chart(df: pd.DataFrame,
     if plot_macd:
         # MACD
         plt.subplot(6, 1, 2)
-        plt.plot(data_indices, indicators['MACD'].reindex(data_indices), label='MACD')
-        plt.plot(data_indices, indicators['MACD_signal'].reindex(data_indices), label='信号线')
-        plt.bar(data_indices, indicators['MACD_hist'].reindex(data_indices), label='MACD柱状图')
+        plt.plot(data_indices, indicators['MACD_DIF'].reindex(data_indices), label='MACD')
+        plt.plot(data_indices, indicators['MACD_DEA'].reindex(data_indices), label='信号线')
+        plt.bar(data_indices, indicators['MACD_BAR'].reindex(data_indices), label='MACD柱状图')
         plt.title('MACD指标')
         plt.legend()
 
@@ -420,9 +381,9 @@ def plot_stock_chart(df: pd.DataFrame,
     if plot_boll:
         # 布林带
         plt.subplot(6, 1, 6)
-        plt.plot(data_indices, indicators['BB_upper'].reindex(data_indices), label='BOLL上轨')
-        plt.plot(data_indices, indicators['BB_middle'].reindex(data_indices), label='BOLL中轨')
-        plt.plot(data_indices, indicators['BB_lower'].reindex(data_indices), label='BOLL下轨')
+        plt.plot(data_indices, indicators['BOLL_UP'].reindex(data_indices), label='BOLL上轨')
+        plt.plot(data_indices, indicators['BOLL_MID'].reindex(data_indices), label='BOLL中轨')
+        plt.plot(data_indices, indicators['BOLL_DOWN'].reindex(data_indices), label='BOLL下轨')
         plt.title('布林带')
         plt.legend()
     

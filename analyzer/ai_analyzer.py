@@ -16,10 +16,8 @@ from typing import Union
 
 from analyzer.base_analyzer import BaseAnalyzer
 from utils.indicators import plot_stock_chart, calculate_technical_indicators
-from utils.llm_api import LLMAPI
 from utils.logger import get_logger
 from utils.akshare_api import AkshareAPI
-from utils.tavily_api import TavilyAPI
 # 设置中文字体
 font_path = fm.findfont(fm.FontProperties(family='SimHei'))
 plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -41,20 +39,17 @@ class AiAnalyzer(BaseAnalyzer):
             stock_name (str, 可选): 股票名称，如不提供则通过基类获取
             end_date (str 或 datetime, 可选): 结束日期，默认为当前日期
             days (int, 可选): 回溯天数，默认365天
-            ai_type (str, 可选): AI模型类型，如 "openai", "gemini" 等
         """
         super().__init__(stock_code, stock_name, end_date, days)
-        self.ai_type = ai_type
-        self.tavily_api = TavilyAPI()
         
         # 初始化各类数据属性
-        self.financial_data = None
-        self.news_data = None
-        self.indicators = {}
-        self.tech_summary = {}
-        self.financial_summary = {}
-        self.news_summary = {}
-        self.analysis_report = ""
+        self.financial_data = None # 财务数据
+        self.news_data = None # 新闻数据
+        self.tech_summary = {} # 技术分析摘要
+        self.financial_summary = {} # 财务分析摘要
+        self.news_summary = {} # 新闻舆情摘要
+        self.analysis_report = "" # AI分析报告
+        self.ai_type = ai_type
         
         # 设置字体
         try:
@@ -74,16 +69,7 @@ class AiAnalyzer(BaseAnalyzer):
             if self.daily_data.empty:
                 logger.warning(f"未能获取到股票 {self.stock_code} 的数据")
                 return False
-            
-            logger.info(f"成功获取 {self.stock_code} 的 {len(self.daily_data)} 条数据记录")
-            # 计算技术指标
-            self.stock_name = self.get_stock_name()
-            if not self.stock_name:
-                logger.warning(f"未获取到 {self.stock_code} 的股票名称")
-            
-            self.daily_data['stock_name'] = self.stock_name
-            self.daily_data, self.indicators = calculate_technical_indicators(self.daily_data)
-            return True
+            return self.prepare_data()
         except Exception as e:
             logger.error(f"获取股票数据时出错: {str(e)}")
             return False
@@ -94,7 +80,7 @@ class AiAnalyzer(BaseAnalyzer):
             akshare = AkshareAPI()
             self.financial_data = akshare.get_financial_reports(
                 stock_code=self.stock_code,
-                start_year=str(datetime.now().year - 1)
+                start_year=str(datetime.now().year - 5)
             )
             if self.financial_data is not None and not (isinstance(self.financial_data, pd.DataFrame) and self.financial_data.empty):
                 logger.info(f"成功获取 {self.stock_code} 的财务数据")
@@ -193,7 +179,7 @@ class AiAnalyzer(BaseAnalyzer):
         self.news_summary = summary
         return summary
     
-    def plot_analysis_charts(self, save_filename=None) -> bool:
+    def plot_analysis_charts(self, save_filename=None) -> str:
         """绘制分析图表"""
         if self.daily_data is None or self.daily_data.empty:
             logger.warning("无数据可绘制。请先获取数据。")
@@ -225,12 +211,12 @@ class AiAnalyzer(BaseAnalyzer):
                 self.analysis_result.update({'chart_path': save_path})
             
             logger.info(f"技术分析图表已保存至: {save_path}")
-            return True
+            return save_path
         except Exception as e:
             logger.error(f"绘制图表失败: {e}")
-            return False
+            return ''
     
-    def generate_word_cloud(self, save_filename=None) -> bool:
+    def generate_word_cloud(self, save_filename=None) -> str:
         """生成新闻词云图"""
         if self.news_data is None or self.news_data.empty:
             logger.warning("没有可用的新闻数据，无法生成词云")
@@ -262,10 +248,10 @@ class AiAnalyzer(BaseAnalyzer):
             plt.savefig(save_path)
             logger.info(f"词云图已保存至: {save_path}")
             plt.close()
-            return True
+            return save_path
         except Exception as e:
             logger.error(f"生成词云图失败: {e}")
-            return False
+            return ''
     
     def analyze_with_ai(self, additional_context=None) -> str:
         """使用AI模型进行综合分析"""
@@ -289,17 +275,16 @@ class AiAnalyzer(BaseAnalyzer):
             prompt = f"""
             你是一位专业的中国A股市场分析师，请对{self.stock_name}({self.stock_code}), 请根据以下数据生成一份关于{self.stock_name}({self.stock_code})的AI分析报告：
 
-            {report}
+            分析参考：{report}
 
             请分析：1.技术面评估 2.基本面简评 3.舆情分析 4.投资建议 5.风险提示
             尽量简洁，总字数控制在1500字以内。
             """
-            llm_api = LLMAPI()
             # 使用AI模型进行分析
             if self.ai_type == "openai":
-                analysis_report = llm_api.generate_openai_response(prompt)
+                analysis_report = self.llm_api.generate_openai_response(prompt)
             elif self.ai_type == "gemini":
-                analysis_report = llm_api.generate_gemini_response(prompt)
+                analysis_report = self.llm_api.generate_gemini_response(prompt)
             else:
                 raise ValueError(f"不支持的AI模型类型: {self.ai_type}")
             
@@ -449,7 +434,7 @@ class AiAnalyzer(BaseAnalyzer):
         try:
             # 获取数据
             if not self.fetch_data():
-                return {'status': 'error', 'message': '获取股票数据失败'}
+                return {'status': 'error', 'message': '数据处理失败'}
            
             # 获取财务数据
             self.fetch_financial_data()
@@ -461,16 +446,11 @@ class AiAnalyzer(BaseAnalyzer):
             self.tech_summary = self.generate_technical_summary()
             
             # 绘制分析图表
-            chart_path = ""
-            if self.plot_analysis_charts():
-                chart_path = os.path.join(self.save_path, f"{self.stock_code}_技术分析_{self.end_date.strftime('%Y%m%d')}.png")
-            
+            chart_path = self.plot_analysis_charts()
+           
             # 生成词云图
-            wordcloud_path = ""
-            if self.news_data is not None and not self.news_data.empty:
-                if self.generate_word_cloud():
-                    wordcloud_path = os.path.join(self.save_path, f"{self.stock_code}_词云_{self.end_date.strftime('%Y%m%d')}.png")
-            
+            wordcloud_path = self.generate_word_cloud()
+           
             # 使用AI进行分析
             analysis_report = self.analyze_with_ai(additional_context)
             
@@ -494,6 +474,7 @@ class AiAnalyzer(BaseAnalyzer):
             
             # 保存分析结果
             self.analysis_result = result
+            self.save_analysis_result()
             
             logger.info(f"{self.stock_code} ({self.stock_name}) 分析完成")
             return result

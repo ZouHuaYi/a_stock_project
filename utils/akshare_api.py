@@ -18,7 +18,6 @@ logger = get_logger(__name__)
 
 class AkshareAPI:
     """AkShare API接口封装，提供股票数据获取功能"""
-    
     def __init__(self):
         """初始化AkShare API封装"""
         self.retry_count = DATA_CONFIG.get('retry_count', 3)
@@ -140,6 +139,7 @@ class AkshareAPI:
                     if not stock_data.empty:
                         # 标准化列名
                         column_map = {
+                            '股票代码': 'stock_code',
                             '日期': 'trade_date',
                             '开盘': 'open',
                             '收盘': 'close',
@@ -193,9 +193,8 @@ class AkshareAPI:
         logger.info(f"正在获取股票 {stock_code} 的财务数据...")
         
         try:
-            # 如果未指定开始年份，使用前一年
-            if start_year is None:
-                start_year = str(datetime.now().year - 1)
+            # 去除可能的前缀
+            stock_code = stock_code.replace('sh', '').replace('sz', '').strip()
                 
             # 重试机制
             for i in range(self.retry_count):
@@ -220,118 +219,7 @@ class AkshareAPI:
         except Exception as e:
             logger.error(f"获取财务报表数据时出错: {str(e)}")
             return pd.DataFrame()
-    
-    def calculate_technical_indicators(self, df: pd.DataFrame) -> Dict[str, pd.Series]:
-        """
-        计算技术指标
-        
-        参数:
-            df (pd.DataFrame): 股票价格数据
-            
-        返回:
-            Dict[str, pd.Series]: 技术指标字典
-        """
-        # 确保数据框包含所需的列
-        required_columns = {'Open', 'High', 'Low', 'Close', 'Volume'}
-        
-        # 转换列名为标准名称
-        renamed = False
-        if not all(col in df.columns for col in required_columns):
-            column_map = {
-                'open': 'Open', 
-                'high': 'High', 
-                'low': 'Low', 
-                'close': 'Close', 
-                'volume': 'Volume',
-                'stock_code': '股票代码',
-                'stock_name': '股票名称',
-                '开盘': 'Open', 
-                '最高': 'High', 
-                '最低': 'Low', 
-                '收盘': 'Close', 
-                '成交量': 'Volume'
-            }
-            # 创建一个新的列映射，仅包含数据框中存在的列
-            mapping = {k: v for k, v in column_map.items() if k in df.columns}
-            if mapping:
-                df = df.rename(columns=mapping)
-                renamed = True
-        
-        # 检查是否有必要的列
-        missing_columns = required_columns - set(df.columns)
-        if missing_columns:
-            logger.error(f"缺少计算技术指标所需的列: {missing_columns}")
-            return {}
-            
-        # 计算结果字典
-        indicators = {}
-        
-        try:
-            # 排序数据（按日期升序）
-            if 'trade_date' in df.columns and df.index.name != 'trade_date':
-                df = df.set_index('trade_date').sort_index()
-            elif not isinstance(df.index, pd.DatetimeIndex):
-                logger.warning("数据框没有日期索引，可能影响指标计算")
-            
-            # 计算简单移动平均线
-            for period in [5, 10, 20, 30, 60]:
-                indicators[f'SMA_{period}'] = df['Close'].rolling(window=period).mean()
-            
-            # 计算MACD
-            exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-            exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-            macd = exp1 - exp2
-            signal = macd.ewm(span=9, adjust=False).mean()
-            
-            indicators['MACD'] = macd
-            indicators['MACD_signal'] = signal
-            indicators['MACD_hist'] = macd - signal
-            
-            # 计算KDJ
-            low_min = df['Low'].rolling(window=9).min()
-            high_max = df['High'].rolling(window=9).max()
-            
-            # 避免除零错误
-            rsv = 100 * ((df['Close'] - low_min) / (high_max - low_min + 1e-10))
-            
-            indicators['KDJ_K'] = rsv.ewm(alpha=1/3, adjust=False).mean()
-            indicators['KDJ_D'] = indicators['KDJ_K'].ewm(alpha=1/3, adjust=False).mean()
-            indicators['KDJ_J'] = 3 * indicators['KDJ_K'] - 2 * indicators['KDJ_D']
-            
-            # 计算RSI
-            for period in [6, 12, 24]:
-                delta = df['Close'].diff()
-                gain = delta.where(delta > 0, 0)
-                loss = -delta.where(delta < 0, 0)
-                
-                avg_gain = gain.rolling(window=period).mean()
-                avg_loss = loss.rolling(window=period).mean()
-                
-                # 避免除零错误
-                rs = avg_gain / (avg_loss + 1e-10)
-                indicators[f'RSI_{period}'] = 100 - (100 / (1 + rs))
-            
-            # 计算Bollinger Bands
-            for period in [20]:
-                mid = df['Close'].rolling(window=period).mean()
-                std = df['Close'].rolling(window=period).std()
-                
-                indicators[f'BB_mid_{period}'] = mid
-                indicators[f'BB_upper_{period}'] = mid + 2 * std
-                indicators[f'BB_lower_{period}'] = mid - 2 * std
-            
-            # 计算成交量指标
-            for period in [5, 10, 20]:
-                indicators[f'VWAP_{period}'] = (df['Close'] * df['Volume']).rolling(window=period).sum() / df['Volume'].rolling(window=period).sum()
-                indicators[f'VOL_MA_{period}'] = df['Volume'].rolling(window=period).mean()
-            
-            logger.info("技术指标计算完成")
-            return indicators
-            
-        except Exception as e:
-            logger.error(f"计算技术指标时出错: {str(e)}")
-            return {}
-    
+  
     def generate_technical_summary(self, df: pd.DataFrame, indicators: Dict[str, pd.Series]) -> Dict:
         """
         生成技术分析摘要
@@ -372,33 +260,33 @@ class AkshareAPI:
             tech_signals = []
             
             # 均线分析
-            if all(f'SMA_{period}' in indicators for period in [5, 20]):
-                ma5 = indicators['SMA_5'].iloc[-1]
-                ma20 = indicators['SMA_20'].iloc[-1]
+            if all(f'MA{period}' in indicators for period in [5, 20]):
+                ma5 = indicators['MA5'].iloc[-1]
+                ma20 = indicators['MA20'].iloc[-1]
                 
                 if ma5 > ma20:
                     tech_signals.append("均线多头排列")
-                    if ma5 > ma20 and indicators['SMA_5'].iloc[-2] <= indicators['SMA_20'].iloc[-2]:
+                    if ma5 > ma20 and indicators['MA5'].iloc[-2] <= indicators['MA20'].iloc[-2]:
                         tech_signals.append("5日均线上穿20日均线，黄金交叉")
                 else:
                     tech_signals.append("均线空头排列")
-                    if ma5 < ma20 and indicators['SMA_5'].iloc[-2] >= indicators['SMA_20'].iloc[-2]:
+                    if ma5 < ma20 and indicators['MA5'].iloc[-2] >= indicators['MA20'].iloc[-2]:
                         tech_signals.append("5日均线下穿20日均线，死亡交叉")
             
             # MACD分析
-            if all(key in indicators for key in ['MACD', 'MACD_signal', 'MACD_hist']):
-                macd = indicators['MACD'].iloc[-1]
-                signal = indicators['MACD_signal'].iloc[-1]
-                hist = indicators['MACD_hist'].iloc[-1]
+            if all(key in indicators for key in ['MACD_DIF', 'MACD_DEA', 'MACD_BAR']):
+                macd = indicators['MACD_DIF'].iloc[-1]
+                signal = indicators['MACD_DEA'].iloc[-1]
+                hist = indicators['MACD_BAR'].iloc[-1]
                 
                 if macd > signal:
                     tech_signals.append("MACD金叉")
                 else:
                     tech_signals.append("MACD死叉")
                     
-                if hist > 0 and indicators['MACD_hist'].iloc[-2] <= 0:
+                if hist > 0 and indicators['MACD_BAR'].iloc[-2] <= 0:
                     tech_signals.append("MACD柱状图由负转正")
-                elif hist < 0 and indicators['MACD_hist'].iloc[-2] >= 0:
+                elif hist < 0 and indicators['MACD_BAR'].iloc[-2] >= 0:
                     tech_signals.append("MACD柱状图由正转负")
             
             # KDJ分析

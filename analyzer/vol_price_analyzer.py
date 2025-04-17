@@ -43,18 +43,15 @@ class VolPriceAnalyzer(BaseAnalyzer):
         """
         try:
             self.daily_data = self.get_stock_daily_data()
+            
             if self.daily_data.empty:
+                logger.warning(f"未能获取到股票 {self.stock_code} 的数据")
                 return False
-            self.stock_name = self.get_stock_name()
-            self.daily_data['stock_name'] = self.stock_name
-            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
-
+            self.prepare_data()
             # 计算量比（当日成交量/5日平均成交量）
             self.daily_data['volume_ratio'] = self.daily_data['volume'] / self.daily_data['VOL_MA5']
-            
             # 计算涨跌幅
             self.daily_data['price_change_pct'] = self.daily_data['close'].pct_change() * 100
-            
             return True
         except Exception as e:
             logger.error(f"准备量价数据时出错: {e}")

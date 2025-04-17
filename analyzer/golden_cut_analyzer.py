@@ -51,12 +51,11 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         try:
             # 从AkShare获取股票日线数据
             self.daily_data = self.get_stock_daily_data()
+            
             if self.daily_data.empty:
+                logger.warning(f"未能获取到股票 {self.stock_code} 的数据")
                 return False
-            self.stock_name = self.get_stock_name()
-            self.daily_data['stock_name'] = self.stock_name
-            self.daily_data, _ = calculate_technical_indicators(self.daily_data)
-            return True
+            return self.prepare_data()
                 
         except Exception as e:
             logger.error(f"获取数据时出错: {str(e)}")
@@ -369,7 +368,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
         try:
             # 获取数据
             if not self.fetch_data():
-                return {'status': 'error', 'message': '获取股票数据失败'}
+                return {'status': 'error', 'message': '数据处理失败'}
             
             # 计算斐波那契回调水平
             if not self.calculate_fibonacci_levels():
@@ -380,7 +379,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
            
             # 生成分析摘要
             analysis_summary = self.generate_analysis_summary()
-            
+           
             # 整合结果
             result = {
                 'status': 'success',
@@ -391,14 +390,15 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 'chart_path': chart_path,
                 'description': analysis_summary
             }
-          
+            
             path_txt = os.path.join(self.save_path, f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.txt")
             # 保存分析结果到 txt 文件，处理中文乱码问题
             with open(path_txt, 'w', encoding='utf-8') as f:
                 f.write(analysis_summary)
-                logger.info(f"斐波那契回调分析结果已保存至: {path_txt}")
+
+            logger.info(f"斐波那契回调分析结果已保存至: {path_txt}")
             self.save_analysis_result(result)
-            logger.info(f"{self.stock_code} ({self.stock_name}) 斐波那契分析完成")
+            logger.info(f"{self.stock_code} ({self.stock_name}) 斐波那契回调分析完成")
             return result
             
         except Exception as e:
