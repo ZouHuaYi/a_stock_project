@@ -178,7 +178,90 @@ class AkshareAPI:
         except Exception as e:
             logger.error(f"获取股票历史数据时出错: {str(e)}")
             return pd.DataFrame()
+        
+    def get_stock_history_min(self, stock_code: str, period: str = "30", 
+                              days: int = 7) -> pd.DataFrame:
+        """
+        获取股票分钟级别历史数据
+        
+        参数:
+            stock_code (str): 股票代码
+            period (str): 周期，如 {'1', '5', '15', '30', '60'}
+            
+        """
+        logger.info(f"正在获取股票 {stock_code} 的分钟级别历史数据...")
+
+        try:
+            # 计算日期范围
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days)
+            # 将日期转换为字符串格式 到分钟 开始是 00:00:00 结束是 23:59:59
+            start_date_str = start_date.strftime('%Y%m%d 00:00:00')
+            end_date_str = end_date.strftime('%Y%m%d 23:59:59')
+
+            # 重试机制
+            for i in range(self.retry_count):
+                try:
+                    # 通过 AkShare 获取分钟级别历史数据
+                    stock_data = ak.index_zh_a_hist_min_em(
+                        symbol=stock_code,
+                        period=period,
+                        start_date=start_date_str,
+                        end_date=end_date_str
+                    )
+                    if not stock_data.empty:    
+                        # 标准化列名
+                        column_map = {
+                            '时间': 'trade_date',
+                            '开盘': 'open',
+                            '收盘': 'close',
+                            '最高': 'high',
+                            '最低': 'low',
+                            '成交量': 'volume',
+                            '成交额': 'amount'
+                        }
+                        logger.info(f"请求 {stock_code} 分钟级别历史数据成功，数据长度为 {len(stock_data)}")
+                        # 确保数值列类型正确
+                        for col in ['open', 'close', 'high', 'low', 'volume', 'amount']:
+                            if col in stock_data.columns:
+                                stock_data[col] = pd.to_numeric(stock_data[col], errors='coerce')   
+
+                         # 只保留上面的 column_map 中的列
+                        stock_data = stock_data[column_map.keys()]
+                        stock_data.rename(columns=column_map, inplace=True)
+                        
+                        # 将数据按分钟分组
+                        stock_data['stock_code'] = stock_code
+                        
+                        # 如果 stock_data[open] 位空 或者 等于 0 ，0.00 则那么这个值就等于 前一行的close, 如果前一个close不存在则删除这行
+                        # 处理开盘价为空的记录
+                        for index, row in stock_data.iterrows():
+                            if pd.isna(row['open']) or row['open'] == 0 or row['open'] == 0.00:
+                                if index > 0:
+                                    # 使用前一个收盘价填充开盘价
+                                    stock_data.at[index, 'open'] = stock_data.at[index - 1, 'close']
+                                
+
+                        # 如果 stock_data[open] 位空 或者 等于 0 ，0.00 则那么这个值就等于 前一行的close, 如果前一个close不存在则删除这行
+                        stock_data = stock_data[stock_data['open'].notna() & (stock_data['open'] != 0) & (stock_data['open'] != 0.00)]
+
+                        logger.info(f"成功获取 {len(stock_data)} 条 {stock_code} 分钟级别历史数据")
+                        return stock_data
+                    
+                    logger.warning(f"获取股票 {stock_code} 分钟级别历史数据失败，第 {i+1} 次重试中...")
+                    time.sleep(self.retry_interval)
     
+                except Exception as e:
+                    logger.error(f"获取股票 {stock_code} 分钟级别历史数据出错 (尝试 {i+1}/{self.retry_count}): {str(e)}")
+                    time.sleep(self.retry_interval)
+            
+            logger.error(f"获取股票 {stock_code} 分钟级别历史数据失败，已重试 {self.retry_count} 次")
+            return pd.DataFrame()
+            
+        except Exception as e:
+            logger.error(f"获取股票分钟级别历史数据时出错: {str(e)}")
+            return pd.DataFrame()
+
     def get_financial_reports(self, stock_code: str, start_year: str = None) -> pd.DataFrame:
         """
         获取财务报表数据
