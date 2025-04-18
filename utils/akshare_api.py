@@ -118,7 +118,7 @@ class AkshareAPI:
         
         try:
             # 计算日期范围
-            end_date = datetime.now()
+            end_date = datetime.now() + timedelta(days=1)
             start_date = end_date - timedelta(days=years * 365)
             
             start_date_str = start_date.strftime('%Y%m%d')
@@ -193,7 +193,7 @@ class AkshareAPI:
 
         try:
             # 计算日期范围
-            end_date = datetime.now()
+            end_date = datetime.now() + timedelta(days=1)
             start_date = end_date - timedelta(days)
             # 将日期转换为字符串格式 到分钟 开始是 00:00:00 结束是 23:59:59
             start_date_str = start_date.strftime('%Y%m%d 00:00:00')

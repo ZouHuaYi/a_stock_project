@@ -39,7 +39,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
     """
     
     def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
-                 days: int = 365, levels: List[str] = None):
+                 days: int = 365 * 2, levels: List[str] = None):
         """
         初始化缠论分析器
         
@@ -53,12 +53,10 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         super().__init__(stock_code, stock_name, end_date, days)
         
         # 设置分析周期级别
-        self.levels = levels if levels else ["daily", "30min", "5min", "1min"]
+        self.levels = levels if levels else ["daily", "30min", "5min"]
         
         # 各级别数据字典
         self.level_data = {}
-        
-        # 分析结果字典
         self.bi_data = {}  # 笔数据
         self.xianduan_data = {}  # 线段数据
         self.zhongshu_data = {}  # 中枢数据
@@ -117,19 +115,19 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                             minute_data = akshare.get_stock_history_min(
                                 stock_code=self.stock_code,
                                 period="30",  # 期间可能需要调整为实际API支持的参
-                                days=30
+                                days=30 * 2
                             )
                         elif level == "5min":
                             minute_data = akshare.get_stock_history_min(
                                 stock_code=self.stock_code,
                                 period="5",
-                                days=5
+                                days=5 * 2
                             )
                         elif level == "1min":
                             minute_data = akshare.get_stock_history_min(
                                 stock_code=self.stock_code,
                                 period="1",
-                                days=1
+                                days=1 * 2
                             )
                         else:
                             minute_data = pd.DataFrame()
@@ -257,22 +255,59 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         # 初始化分型列
         result_df['fractal_top'] = False
         result_df['fractal_bottom'] = False
+        result_df['merged'] = False
         
-        # 标记顶分型和底分型
-        for i in range(1, len(result_df) - 1):
-            # 前、中、后三个K线
+        # 处理包含关系
+        for i in range(1, len(result_df)-1):
             prev = result_df.iloc[i-1]
             curr = result_df.iloc[i]
             next = result_df.iloc[i+1]
             
-            # 顶分型: 中间K线的高点高于前后两个K线的高点
-            if curr['high'] > prev['high'] and curr['high'] > next['high']:
-                result_df.iloc[i, result_df.columns.get_loc('fractal_top')] = True
             
-            # 底分型: 中间K线的低点低于前后两个K线的低点
-            if curr['low'] < prev['low'] and curr['low'] < next['low']:
-                result_df.iloc[i, result_df.columns.get_loc('fractal_bottom')] = True
+            # 判断包含关系
+            if (curr['high'] >= prev['high'] and curr['low'] <= prev['low']) or \
+               (curr['high'] <= prev['high'] and curr['low'] >= prev['low']):
+                result_df.at[result_df.index[i], 'merged'] = True
+                continue
+                
+            # 顶分型条件
+            if (curr['high'] > prev['high'] and curr['high'] > next['high'] and
+                curr['low'] > prev['low'] and curr['low'] > next['low']):
+                result_df.at[result_df.index[i], 'fractal_top'] = True
+                
+            # 底分型条件
+            if (curr['low'] < prev['low'] and curr['low'] < next['low'] and
+                curr['high'] < prev['high'] and curr['high'] < next['high']):
+                result_df.at[result_df.index[i], 'fractal_bottom'] = True
+
+        # 第二步：验证分型有效性
+        tops = result_df[result_df['fractal_top']].index.tolist()
+        bottoms = result_df[result_df['fractal_bottom']].index.tolist()
         
+        # 确保顶底分型交替出现
+        valid_fractals = []
+        last_type = None
+
+        for idx in sorted(tops + bottoms):
+            if idx in tops:
+                if last_type != 'top':
+                    valid_fractals.append((idx, 'top'))
+                    last_type = 'top'
+            else:
+                if last_type != 'bottom':
+                    valid_fractals.append((idx, 'bottom'))
+                    last_type = 'bottom'
+        
+        # 重置分型标记
+        result_df['fractal_top'] = False
+        result_df['fractal_bottom'] = False
+
+        for idx, ftype in valid_fractals:
+            if ftype == 'top':
+                result_df.at[idx, 'fractal_top'] = True
+            else:
+                result_df.at[idx, 'fractal_bottom'] = True
+
         return result_df
     
     def mark_bi(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -291,62 +326,67 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         # 复制输入数据
         result_df = df.copy()
         
-        # 确保已标记分型
         if 'fractal_top' not in result_df.columns or 'fractal_bottom' not in result_df.columns:
             result_df = self.mark_fractal_points(result_df)
-        
-        # 初始化笔标记列
-        result_df['bi_type'] = None  # 可能的值: 'top', 'bottom', None
+            
+        result_df['bi_type'] = None
         result_df['bi_price'] = np.nan
         result_df['bi_start'] = False
         result_df['bi_end'] = False
+       
+        # 获取有效分型点
+        tops = result_df[result_df['fractal_top']].index.tolist()
+        bottoms = result_df[result_df['fractal_bottom']].index.tolist()
+        all_fractals = sorted([(idx, 'top') for idx in tops] + [(idx, 'bottom') for idx in bottoms])
         
-        # 提取所有有效分型
-        tops = result_df[result_df['fractal_top'] == True].index.tolist()
-        bottoms = result_df[result_df['fractal_bottom'] == True].index.tolist()
-        
-        if not tops or not bottoms:
+        if len(all_fractals) < 2:
             return result_df
-        
-        # 合并并排序所有分型
-        all_points = [(idx, 'top' if idx in tops else 'bottom') for idx in set(tops + bottoms)]
-        all_points.sort()  # 按日期排序
-        
-        # 严格按照缠论笔的定义标记
-        bi_points = []
-        for i in range(len(all_points) - 1):
-            curr_idx, curr_type = all_points[i]
-            next_idx, next_type = all_points[i + 1]
             
-            # 相邻分型方向相反
-            if curr_type != next_type:
-                # 确保分型之间有包含关系（缠论笔的要求）
-                curr_k = result_df.loc[curr_idx]
+        # 笔识别逻辑
+        bi_points = []
+        i = 0
+        while i < len(all_fractals)-1:
+            current_idx, current_type = all_fractals[i]
+            next_idx, next_type = all_fractals[i+1]
+            
+            # 确保分型方向相反
+            if current_type != next_type:
+                current_k = result_df.loc[current_idx]
                 next_k = result_df.loc[next_idx]
                 
-                # 顶分型后接底分型，需要下跌
-                if curr_type == 'top' and next_type == 'bottom':
-                    if next_k['low'] < curr_k['low']:  # 下方笔突破
-                        bi_points.append((curr_idx, curr_type))
-                        bi_points.append((next_idx, next_type))
+                # 检查K线数量是否足够(至少5根)
+                k_count = len(result_df.loc[current_idx:next_idx])
+                if k_count < 5:
+                    i += 1
+                    continue
                 
-                # 底分型后接顶分型，需要上涨
-                elif curr_type == 'bottom' and next_type == 'top':
-                    if next_k['high'] > curr_k['high']:  # 上方笔突破
-                        bi_points.append((curr_idx, curr_type))
-                        bi_points.append((next_idx, next_type))
+                # 向上笔: 底分型 -> 顶分型
+                if current_type == 'bottom' and next_type == 'top':
+                    if next_k['high'] > current_k['high']:  # 确认向上突破
+                        bi_points.append((current_idx, 'bottom'))
+                        bi_points.append((next_idx, 'top'))
+                        i += 2  # 跳过下一个分型
+                        continue
+                        
+                # 向下笔: 顶分型 -> 底分型
+                elif current_type == 'top' and next_type == 'bottom':
+                    if next_k['low'] < current_k['low']:  # 确认向下突破
+                        bi_points.append((current_idx, 'top'))
+                        bi_points.append((next_idx, 'bottom'))
+                        i += 2  # 跳过下一个分型
+                        continue
+            i += 1
         
         # 标记笔
         for i, (idx, bi_type) in enumerate(bi_points):
             price = result_df.loc[idx, 'high'] if bi_type == 'top' else result_df.loc[idx, 'low']
-            result_df.loc[idx, 'bi_type'] = bi_type
-            result_df.loc[idx, 'bi_price'] = price
+            result_df.at[idx, 'bi_type'] = bi_type
+            result_df.at[idx, 'bi_price'] = price
             
-            # 标记笔的起点和终点
-            if i % 2 == 0:  # 每偶数点作为起点
-                result_df.loc[idx, 'bi_start'] = True
-            else:  # 每奇数点作为终点
-                result_df.loc[idx, 'bi_end'] = True
+            if i % 2 == 0:  # 起点
+                result_df.at[idx, 'bi_start'] = True
+            else:  # 终点
+                result_df.at[idx, 'bi_end'] = True
         
         return result_df
     
@@ -370,95 +410,87 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         if 'bi_type' not in result_df.columns:
             result_df = self.mark_bi(result_df)
         
-        # 初始化线段标记列
-        result_df['xianduan_type'] = None  # 可能的值: 'top', 'bottom', None
+        result_df['xianduan_type'] = None
         result_df['xianduan_price'] = np.nan
         result_df['xianduan_start'] = False
         result_df['xianduan_end'] = False
         
-        # 提取所有笔端点
-        bi_points = result_df[(result_df['bi_start'] == True) | (result_df['bi_end'] == True)]
+        # 获取笔端点
+        bi_points = result_df[(result_df['bi_start']) | (result_df['bi_end'])].sort_index()
         
-        if len(bi_points) < 3:  # 至少需要3个笔端点才能确定线段
-            return result_df
-        
-        # 线段标记逻辑
-        # 采用特征序列法（简化版）
+        if len(bi_points) < 3:
+            return result
+            
+        # 线段识别逻辑
         xianduan_points = []
+        direction = None  # 1:向上, -1:向下
+        start_idx = None
+        start_price = None
         
-        # 初始状态
-        if bi_points.iloc[0]['bi_type'] == 'bottom':
-            direction = 1  # 向上线段
-            extreme_idx = bi_points.iloc[0].name
-            extreme_val = bi_points.iloc[0]['low']
-        else:
-            direction = -1  # 向下线段
-            extreme_idx = bi_points.iloc[0].name
-            extreme_val = bi_points.iloc[0]['high']
-        
-        xianduan_points.append((extreme_idx, 'bottom' if direction == 1 else 'top'))
-        
-        # 遍历所有笔，检查是否有线段特征序列成立
-        i = 1
-        while i < len(bi_points):
-            curr = bi_points.iloc[i]
+        for i in range(len(bi_points)-2):
+            current = bi_points.iloc[i]
+            next1 = bi_points.iloc[i+1]
+            next2 = bi_points.iloc[i+2]
             
-            if direction == 1:  # 向上线段中
-                if curr['bi_type'] == 'top':
-                    # 潜在的线段顶点
-                    potential_top = curr
-                    # 检查是否有效顶分型
-                    if potential_top['high'] > extreme_val:
-                        # 确认线段顶点
-                        xianduan_points.append((potential_top.name, 'top'))
-                        # 转向
+            # 确定初始方向
+            if direction is None:
+                if current['bi_type'] == 'bottom' and next1['bi_type'] == 'top':
+                    direction = 1
+                    start_idx = current.name
+                    start_price = current['low']
+                elif current['bi_type'] == 'top' and next1['bi_type'] == 'bottom':
+                    direction = -1
+                    start_idx = current.name
+                    start_price = current['high']
+                else:
+                    continue
+                    
+            # 向上线段中的处理
+            if direction == 1:
+                # 检查是否被向下笔破坏
+                if next1['bi_type'] == 'bottom' and next2['bi_type'] == 'top':
+                    if next2['high'] > next1['high']:  # 新高，继续向上
+                        continue
+                    else:  # 线段被破坏
+                        xianduan_points.append((start_idx, 'bottom'))
+                        xianduan_points.append((next1.name, 'top'))
                         direction = -1
-                        extreme_idx = potential_top.name
-                        extreme_val = potential_top['high']
-                elif curr['bi_type'] == 'bottom' and curr['low'] < extreme_val:
-                    # 更低的底，更新当前线段起点
-                    extreme_idx = curr.name
-                    extreme_val = curr['low']
-                    # 修正最后一个线段点
-                    if xianduan_points and xianduan_points[-1][1] == 'bottom':
-                        xianduan_points[-1] = (extreme_idx, 'bottom')
-                    else:
-                        xianduan_points.append((extreme_idx, 'bottom'))
-            else:  # 向下线段中
-                if curr['bi_type'] == 'bottom':
-                    # 潜在的线段底点
-                    potential_bottom = curr
-                    # 检查是否有效底分型
-                    if potential_bottom['low'] < extreme_val:
-                        # 确认线段底点
-                        xianduan_points.append((potential_bottom.name, 'bottom'))
-                        # 转向
+                        start_idx = next1.name
+                        start_price = next1['low']
+                        
+            # 向下线段中的处理
+            elif direction == -1:
+                # 检查是否被向上笔破坏
+                if next1['bi_type'] == 'top' and next2['bi_type'] == 'bottom':
+                    if next2['low'] < next1['low']:  # 新低，继续向下
+                        continue
+                    else:  # 线段被破坏
+                        xianduan_points.append((start_idx, 'top'))
+                        xianduan_points.append((next1.name, 'bottom'))
                         direction = 1
-                        extreme_idx = potential_bottom.name
-                        extreme_val = potential_bottom['low']
-                elif curr['bi_type'] == 'top' and curr['high'] > extreme_val:
-                    # 更高的顶，更新当前线段起点
-                    extreme_idx = curr.name
-                    extreme_val = curr['high']
-                    # 修正最后一个线段点
-                    if xianduan_points and xianduan_points[-1][1] == 'top':
-                        xianduan_points[-1] = (extreme_idx, 'top')
-                    else:
-                        xianduan_points.append((extreme_idx, 'top'))
-            
-            i += 1
+                        start_idx = next1.name
+                        start_price = next1['high']
+        
+        # 标记最后一个线段
+        if direction is not None and start_idx is not None:
+            last_point = bi_points.iloc[-1]
+            if direction == 1:
+                xianduan_points.append((start_idx, 'bottom'))
+                xianduan_points.append((last_point.name, 'top'))
+            else:
+                xianduan_points.append((start_idx, 'top'))
+                xianduan_points.append((last_point.name, 'bottom'))
         
         # 标记线段
-        for i, (idx, xianduan_type) in enumerate(xianduan_points):
-            price = result_df.loc[idx, 'high'] if xianduan_type == 'top' else result_df.loc[idx, 'low']
-            result_df.loc[idx, 'xianduan_type'] = xianduan_type
-            result_df.loc[idx, 'xianduan_price'] = price
+        for i, (idx, xd_type) in enumerate(xianduan_points):
+            price = result_df.loc[idx, 'high'] if xd_type == 'top' else result_df.loc[idx, 'low']
+            result_df.at[idx, 'xianduan_type'] = xd_type
+            result_df.at[idx, 'xianduan_price'] = price
             
-            # 标记线段的起点和终点
-            if i % 2 == 0:  # 每偶数点作为起点
-                result_df.loc[idx, 'xianduan_start'] = True
-            else:  # 每奇数点作为终点
-                result_df.loc[idx, 'xianduan_end'] = True
+            if i % 2 == 0:  # 起点
+                result_df.at[idx, 'xianduan_start'] = True
+            else:  # 终点
+                result_df.at[idx, 'xianduan_end'] = True
         
         return result_df
     
@@ -483,102 +515,221 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         if 'xianduan_type' not in result_df.columns:
             result_df = self.mark_xianduan(result_df)
         
-        # 提取所有线段端点
-        xianduan_points = result_df[(result_df['xianduan_start'] == True) | (result_df['xianduan_end'] == True)]
+        # 获取线段端点
+        xd_points = result_df[(result_df['xianduan_start']) | (result_df['xianduan_end'])].sort_index()
         
-        if len(xianduan_points) < min_segments + 1:  # 至少需要min_segments+1个线段端点才能形成中枢
+        if len(xd_points) < 4:  # 至少需要3个线段
             return result_df, []
-        
-        # 初始化中枢标记列
-        result_df['in_zhongshu'] = False
-        result_df['zhongshu_id'] = np.nan
-        result_df['zhongshu_start'] = False
-        result_df['zhongshu_end'] = False
-        
-        # 中枢识别逻辑
+            
         zhongshu_list = []
+        current_zhongshu = None
         
-        # 至少3个线段重叠区间形成中枢
-        for i in range(len(xianduan_points) - min_segments):
-            # 获取连续min_segments+1个线段端点
-            segment_points = xianduan_points.iloc[i:i+min_segments+1]
+        for i in range(len(xd_points)-3):
+            seg1_start = xd_points.iloc[i]
+            seg1_end = xd_points.iloc[i+1]
+            seg2_start = xd_points.iloc[i+2]
+            seg2_end = xd_points.iloc[i+3]
             
-            # 判断是否有重叠区间
-            highs = []
-            lows = []
-            
-            for j in range(min_segments):
-                start_point = segment_points.iloc[j]
-                end_point = segment_points.iloc[j+1]
-                
-                if start_point['xianduan_type'] == 'top':
-                    highs.append(start_point['high'])
-                    lows.append(end_point['low'])
-                else:
-                    lows.append(start_point['low'])
-                    highs.append(end_point['high'])
-            
-            # 检查是否有共同区间
-            overlap_high = min(highs)
-            overlap_low = max(lows)
-            
-            # 有效中枢条件：重叠区间存在（上限高于下限）
-            if overlap_high > overlap_low:
-                # 找到中枢起止时间
-                zhongshu_start = segment_points.iloc[0].name
-                zhongshu_end = segment_points.iloc[-1].name
-                
-                # 添加中枢记录
-                zhongshu_id = len(zhongshu_list) + 1
-                zhongshu = {
-                    'id': zhongshu_id,
-                    'start_idx': zhongshu_start,
-                    'end_idx': zhongshu_end,
-                    'zg': overlap_high,  # 中枢上限
-                    'zd': overlap_low,   # 中枢下限
-                    'level': min_segments # 中枢级别
-                }
-                zhongshu_list.append(zhongshu)
-                
-                # 标记中枢范围内的K线
-                mask = (result_df.index >= zhongshu_start) & (result_df.index <= zhongshu_end)
-                result_df.loc[mask, 'in_zhongshu'] = True
-                result_df.loc[mask, 'zhongshu_id'] = zhongshu_id
-                result_df.loc[zhongshu_start, 'zhongshu_start'] = True
-                result_df.loc[zhongshu_end, 'zhongshu_end'] = True
-        
-        # 合并相邻中枢
-        i = 0
-        while i < len(zhongshu_list) - 1:
-            curr = zhongshu_list[i]
-            next = zhongshu_list[i+1]
-            
-            # 检查是否为同方向中枢且有重叠
-            if curr['end_idx'] >= next['start_idx']:
-                # 合并中枢
-                merged = {
-                    'id': curr['id'],
-                    'start_idx': curr['start_idx'],
-                    'end_idx': next['end_idx'],
-                    'zg': min(curr['zg'], next['zg']),
-                    'zd': max(curr['zd'], next['zd']),
-                    'level': max(curr['level'], next['level'])
-                }
-                
-                # 更新中枢列表
-                zhongshu_list[i] = merged
-                zhongshu_list.pop(i+1)
-                
-                # 更新DataFrame标记
-                mask = (result_df.index >= merged['start_idx']) & (result_df.index <= merged['end_idx'])
-                result_df.loc[mask, 'in_zhongshu'] = True
-                result_df.loc[mask, 'zhongshu_id'] = merged['id']
-                result_df.loc[merged['start_idx'], 'zhongshu_start'] = True
-                result_df.loc[merged['end_idx'], 'zhongshu_end'] = True
+            # 确定重叠区间
+            if seg1_start['xianduan_type'] == 'bottom':
+                # 向上线段开始的中枢
+                zg = min(seg1_end['high'], seg2_end['high'])  # 中枢高点
+                zd = max(seg1_start['low'], seg2_start['low'])  # 中枢低点
             else:
-                i += 1
-        
+                # 向下线段开始的中枢
+                zg = min(seg1_start['high'], seg2_start['high'])
+                zd = max(seg1_end['low'], seg2_end['low'])
+                
+            # 有效中枢条件
+            if zg > zd:
+                # 检查是否与当前中枢重叠
+                if current_zhongshu and zg >= current_zhongshu['zd'] and zd <= current_zhongshu['zg']:
+                    # 合并中枢
+                    current_zhongshu['zg'] = min(current_zhongshu['zg'], zg)
+                    current_zhongshu['zd'] = max(current_zhongshu['zd'], zd)
+                    current_zhongshu['end_idx'] = seg2_end.name
+                else:
+                    # 新中枢
+                    if current_zhongshu:
+                        zhongshu_list.append(current_zhongshu)
+                        
+                    current_zhongshu = {
+                        'id': len(zhongshu_list) + 1,
+                        'start_idx': seg1_start.name,
+                        'end_idx': seg2_end.name,
+                        'zg': zg,
+                        'zd': zd,
+                        'level': self._determine_zhongshu_level(result_df, seg1_start.name, seg2_end.name)
+                    }
+
+                # 严格验证中枢区间
+                if zg > zd and (seg2_end.name - seg1_start.name) >= pd.Timedelta(hours=4):  # 示例：最小时间跨度
+                    # 中枢有效性验证
+                    overlap_ratio = (zg - zd) / ((zg + zd)/2)  # 振幅验证
+                    if overlap_ratio < 0.01:  # 过滤无效微小中枢
+                        logger.debug(f"过滤微小中枢 zg={zg} zd={zd} 振幅{overlap_ratio:.2%}")
+                        continue
+            
+                # 新增波动率验证
+                segment = df.loc[seg1_start.name:seg2_end.name]
+                volatility = segment['high'].max() - segment['low'].min()
+                if volatility < (zg - zd) * 0.5:  # 过滤无效平缓中枢
+                    logger.debug(f"过滤平缓中枢 波动率{volatility:.2f}")
+                    continue
+
+
+        # 添加最后一个中枢
+        if current_zhongshu:
+            zhongshu_list.append(current_zhongshu)
+            
+        # 标记中枢
+        for zs in zhongshu_list:
+            mask = (result_df.index >= zs['start_idx']) & (result_df.index <= zs['end_idx'])
+            result_df.loc[mask, 'in_zhongshu'] = True
+            result_df.loc[mask, 'zhongshu_id'] = zs['id']
+            result_df.loc[zs['start_idx'], 'zhongshu_start'] = True
+            result_df.loc[zs['end_idx'], 'zhongshu_end'] = True
+            
         return result_df, zhongshu_list
+
+    def _determine_zhongshu_level(self, df: pd.DataFrame, start_idx, end_idx) -> int:
+        """确定中枢级别"""
+        try:
+            segment = df.loc[start_idx:end_idx]
+            if segment.empty:
+                logger.warning(f"空中枢段: {start_idx} - {end_idx}")
+                return 0
+                
+            k_count = len(segment)
+            
+            if k_count > 100:  # 日线级别中枢
+                return 3
+            elif k_count > 30:  # 30分钟级别中枢
+                return 2
+            else:  # 5分钟级别中枢
+                return 1
+        except KeyError as e:
+            logger.error(f"中枢级别判断出错: {str(e)}")
+            return 0
+        except Exception as e:
+            logger.error(f"未知错误: {str(e)}")
+            return 0
+
+    # 改进的买卖点识别方法
+    def find_signals(self, df: pd.DataFrame, zhongshu_list: List[Dict]) -> Tuple[pd.DataFrame, List[Dict]]:
+        """改进的买卖点识别方法，确保价格正确对应"""
+        if len(df) < 10 or not zhongshu_list:
+            return df, []
+            
+        result = df.copy()
+        result['signal_type'] = None
+        result['signal_price'] = np.nan
+        
+        # 获取线段端点
+        xd_points = result[(result['xianduan_start']) | (result['xianduan_end'])].sort_index()
+        
+        signals = []
+        
+        for zs in zhongshu_list:
+            # 中枢后的第一个线段端点
+            post_zs_points = xd_points[xd_points.index > zs['end_idx']]
+            if len(post_zs_points) < 1:
+                continue
+                
+            first_point = post_zs_points.iloc[0]
+            
+            # 第一类买卖点
+            if first_point['xianduan_type'] == 'top' and first_point['high'] > zs['zg']:
+                # 第一类卖点
+                signals.append({
+                    'date': first_point.name,
+                    'type': '1sell',
+                    'price': first_point['high'],
+                    'zhongshu_id': zs['id'],
+                    'description': f'第一类卖点：突破中枢{zs["id"]}上沿'
+                })
+                result.at[first_point.name, 'signal_type'] = '1sell'
+                result.at[first_point.name, 'signal_price'] = first_point['high']
+                
+            elif first_point['xianduan_type'] == 'bottom' and first_point['low'] < zs['zd']:
+                # 第一类买点
+                signals.append({
+                    'date': first_point.name,
+                    'type': '1buy',
+                    'price': first_point['low'],
+                    'zhongshu_id': zs['id'],
+                    'description': f'第一类买点：跌破中枢{zs["id"]}下沿'
+                })
+                result.at[first_point.name, 'signal_type'] = '1buy'
+                result.at[first_point.name, 'signal_price'] = first_point['low']
+                
+            # 第二类买卖点
+            if len(post_zs_points) > 1:
+                second_point = post_zs_points.iloc[1]
+                
+                if (first_point['xianduan_type'] == 'top' and 
+                    second_point['xianduan_type'] == 'bottom' and
+                    second_point['low'] > zs['zd'] and second_point['low'] < zs['zg']):
+                    # 第二类买点
+                    signals.append({
+                        'date': second_point.name,
+                        'type': '2buy',
+                        'price': second_point['low'],
+                        'zhongshu_id': zs['id'],
+                        'description': f'第二类买点：回踩中枢{zs["id"]}区间'
+                    })
+                    result.at[second_point.name, 'signal_type'] = '2buy'
+                    result.at[second_point.name, 'signal_price'] = second_point['low']
+                    
+                elif (first_point['xianduan_type'] == 'bottom' and 
+                      second_point['xianduan_type'] == 'top' and
+                      second_point['high'] > zs['zd'] and second_point['high'] < zs['zg']):
+                    # 第二类卖点
+                    signals.append({
+                        'date': second_point.name,
+                        'type': '2sell',
+                        'price': second_point['high'],
+                        'zhongshu_id': zs['id'],
+                        'description': f'第二类卖点：回抽中枢{zs["id"]}区间'
+                    })
+                    result.at[second_point.name, 'signal_type'] = '2sell'
+                    result.at[second_point.name, 'signal_price'] = second_point['high']
+                    
+            # 第三类买卖点
+            if len(post_zs_points) > 2:
+                third_point = post_zs_points.iloc[2]
+                
+                if (first_point['xianduan_type'] == 'top' and 
+                    second_point['xianduan_type'] == 'bottom' and
+                    third_point['xianduan_type'] == 'top' and
+                    third_point['high'] > first_point['high']):
+                    # 第三类卖点
+                    signals.append({
+                        'date': third_point.name,
+                        'type': '3sell',
+                        'price': third_point['high'],
+                        'zhongshu_id': zs['id'],
+                        'description': f'第三类卖点：新高确认上升趋势'
+                    })
+                    result.at[third_point.name, 'signal_type'] = '3sell'
+                    result.at[third_point.name, 'signal_price'] = third_point['high']
+                    
+                elif (first_point['xianduan_type'] == 'bottom' and 
+                      second_point['xianduan_type'] == 'top' and
+                      third_point['xianduan_type'] == 'bottom' and
+                      third_point['low'] < first_point['low']):
+                    # 第三类买点
+                    signals.append({
+                        'date': third_point.name,
+                        'type': '3buy',
+                        'price': third_point['low'],
+                        'zhongshu_id': zs['id'],
+                        'description': f'第三类买点：新低确认下降趋势'
+                    })
+                    result.at[third_point.name, 'signal_type'] = '3buy'
+                    result.at[third_point.name, 'signal_price'] = third_point['low']
+                    
+        return result, signals
 
     def find_signals(self, df: pd.DataFrame, zhongshu_list: List[Dict]) -> Tuple[pd.DataFrame, List[Dict]]:
         """
@@ -1045,10 +1196,39 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         price_ax.bar(down.index, down['close'] - down['open'], width, bottom=down['open'], color='green')
         
         # 绘制MA均线
+        # 修改后（增加图例可见性检查）
+        ma_lines = []
         for ma in [5, 10, 20, 60]:
             if f'MA{ma}' in df.columns:
-                price_ax.plot(df.index, df[f'MA{ma}'], label=f'MA{ma}')
-        
+                line, = price_ax.plot(df.index, df[f'MA{ma}'], label=f'MA{ma}')
+                ma_lines.append(line)
+
+        # 只在有MA线时添加图例
+        if ma_lines:
+            price_ax.legend(handles=ma_lines, loc='upper left')
+
+        # 对成交量图例做相同处理
+        vol_lines = []
+        if 'VOL_MA5' in df.columns:
+            line, = vol_ax.plot(df.index, df['VOL_MA5'], label='VOL MA5')
+            vol_lines.append(line)
+        if 'VOL_MA10' in df.columns:
+            line, = vol_ax.plot(df.index, df['VOL_MA10'], label='VOL MA10')
+            vol_lines.append(line)
+
+        if vol_lines:
+            vol_ax.legend(handles=vol_lines, loc='upper left')
+
+        # 对MACD图例做相同处理
+        macd_lines = []
+        if all(x in df.columns for x in ['MACD_DIF', 'MACD_DEA']):
+            line1, = macd_ax.plot(df.index, df['MACD_DIF'], label='DIF')
+            line2, = macd_ax.plot(df.index, df['MACD_DEA'], label='DEA')
+            macd_lines.extend([line1, line2])
+
+        if macd_lines:
+            macd_ax.legend(handles=macd_lines, loc='upper left')
+
         # 绘制笔
         if 'bi_start' in df.columns:
             # 连接笔的起点和终点
@@ -1084,32 +1264,59 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                 end_price = df.loc[end_idx, 'low'] if end_type == 'bottom' else df.loc[end_idx, 'high']
                 
                 price_ax.plot([start_idx, end_idx], [start_price, end_price], 'r-', linewidth=2)
-        
-        # 绘制中枢
+
+        # 中枢绘制增强
         if 'in_zhongshu' in df.columns and 'zhongshu_id' in df.columns:
-            zhongshu_ids = df[df['in_zhongshu'] == True]['zhongshu_id'].unique()
+            # 新增有效性检查
+            valid_zhongshu = [
+                zs for zs in self.zhongshu_data.get(level, [])
+                if zs['end_idx'] in df.index and zs['start_idx'] in df.index
+            ]
+        
+            logger.info(f"发现{len(valid_zhongshu)}个有效中枢需要绘制")
             
-            for zhongshu_id in zhongshu_ids:
-                zhongshu_df = df[(df['in_zhongshu'] == True) & (df['zhongshu_id'] == zhongshu_id)]
-                start_idx = zhongshu_df.index[0]
-                end_idx = zhongshu_df.index[-1]
-                
-                # 获取中枢上下限
-                zhongshu_list = self.zhongshu_data.get(level, [])
-                zhongshu = next((z for z in zhongshu_list if z['id'] == zhongshu_id), None)
-                
-                if zhongshu:
-                    zg = zhongshu['zg']  # 中枢上限
-                    zd = zhongshu['zd']  # 中枢下限
+            for zs in valid_zhongshu:
+                try:
+                    # 精确获取价格坐标
+                    zg = zs['zg']
+                    zd = zs['zd']
+                    start_idx = zs['start_idx']
+                    end_idx = zs['end_idx']
                     
-                    # 绘制中枢区间
-                    rect = Rectangle((start_idx, zd), end_idx - start_idx, zg - zd, 
-                                     linewidth=1, edgecolor='purple', facecolor='yellow', alpha=0.2)
+                    # 转换为matplotlib日期格式
+                    start_num = mdates.date2num(start_idx)
+                    end_num = mdates.date2num(end_idx)
+                    
+                    # 计算矩形参数
+                    width = end_num - start_num
+                    height = zg - zd
+                    
+                    # 使用精确坐标绘制
+                    rect = Rectangle(
+                        (start_num, zd),
+                        width,
+                        height,
+                        linewidth=1,
+                        edgecolor='purple',
+                        facecolor='yellow',
+                        alpha=0.3
+                    )
                     price_ax.add_patch(rect)
                     
-                    # 标注中枢编号
-                    price_ax.text(start_idx, zg, f"中枢{int(zhongshu_id)}", fontsize=10, color='purple')
-        
+                    # 动态调整标注位置
+                    text_y = zg + (df['high'].max() - df['low'].min())*0.02
+                    price_ax.text(
+                        start_num,
+                        text_y,
+                        f"中枢{zs['id']}\n({zd:.2f}-{zg:.2f})",
+                        fontsize=8,
+                        color='purple',
+                        verticalalignment='bottom'
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"绘制中枢{zs['id']}时出错: {str(e)}")
+
         # 标记买卖点信号
         if 'signal_type' in df.columns:
             signal_points = df[df['signal_type'].notna()]
@@ -1186,11 +1393,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         vol_ax.set_ylabel('成交量')
         macd_ax.set_ylabel('MACD')
         
-        # 添加图例
-        price_ax.legend(loc='upper left')
-        vol_ax.legend(loc='upper left')
-        macd_ax.legend(loc='upper left')
-        
         # 调整布局
         plt.tight_layout()
         plt.subplots_adjust(top=0.9)
@@ -1265,7 +1467,20 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         
         try:
             # 使用LLM API获取分析
-            llm_result = self.llm_api.generate_openai_response(prompt)
+            # 循环三次获取LLM分析结果，确保获取到有效分析
+            max_retries = 3
+            llm_result = None
+            
+            for i in range(max_retries):
+                try:
+                    llm_result = self.llm_api.generate_openai_response(prompt)
+                    if llm_result and len(llm_result.strip()) > 0:
+                        break
+                    logger.warning(f"第{i+1}次LLM分析结果为空，重试中...")
+                except Exception as e:
+                    logger.error(f"第{i+1}次LLM分析失败: {str(e)}")
+                    if i == max_retries - 1:
+                        llm_result = self.llm_api.generate_gemini_response(prompt)
             
             logger.info(f"已使用LLM增强分析结果")
             
@@ -1343,6 +1558,17 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         # 更新数据
         self.level_data[level] = df
         
+
+        # 临时验证中枢数据
+        for level_key in self.levels:
+            if level_key in self.zhongshu_data and self.zhongshu_data[level_key]:
+                logger.info(f"{level_key}级别中枢数据：")
+                for zs in self.zhongshu_data[level_key]:
+                    logger.info(
+                        f"中枢{zs['id']} 时间:{zs['start_idx']}~{zs['end_idx']} "
+                        f"区间:[{zs['zd']:.2f}-{zs['zg']:.2f}]"
+                    )
+
         # 绘制图表
         chart_path = self.plot_chan_chart(level)
         
@@ -1374,36 +1600,39 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         """
         # 输出缠论分析结果
         # 将分析结果输出到txt文件
-        output_file = os.path.join(self.chart_path, f"{self.stock_code}_chanMaking_{self.end_date_str}.txt")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(f"\n=== 缠论分析结果摘要 ===\n")
-            f.write(f"股票: {result['stock_name']}({result['stock_code']})\n")
-            f.write(f"分析日期: {self.end_date_str}\n")
+        try:
+            output_file = os.path.join(self.chart_path, f"{self.stock_code}_chanMaking_{self.end_date_str}.txt")
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(f"\n=== 缠论分析结果摘要 ===\n")
+                f.write(f"股票: {result['stock_name']}({result['stock_code']})\n")
+                f.write(f"分析日期: {self.end_date_str}\n")
+                
+                f.write(f"\n--- 趋势矩阵 ---\n")
+                for level, data in result.get('trend_matrix', {}).items():
+                    if level == 'index':
+                        continue
+                    f.write(f"{level}: 趋势={data.get('trend')}, 信号={data.get('signal')}, 背驰={data.get('beichi')}\n")
+                
+                f.write(f"\n--- 交易信号 ---\n")
+                signal = result.get('signal', {'action': '未知', 'reason': '无数据', 'confidence': 0, 'stop_loss': '无'})
+                f.write(f"行动: {signal['action']}\n")
+                f.write(f"理由: {signal['reason']}\n")
+                f.write(f"信心度: {signal['confidence']}\n")
+                f.write(f"止损位: {signal['stop_loss']}\n")
+                
+                f.write(f"\n--- 分析图表 ---\n")
+                for level, level_result in result.get('level_results', {}).items():
+                    chart_path = level_result.get('chart_path', '')
+                    if chart_path:
+                        f.write(f"{level}级别图表: {chart_path}\n")
+                
+                if 'llm_analysis' in result and 'result' in result['llm_analysis']:
+                    f.write(f"\n--- LLM增强分析 ---\n")
+                    f.write(result['llm_analysis']['result'])
             
-            f.write(f"\n--- 趋势矩阵 ---\n")
-            for level, data in result['trend_matrix'].items():
-                if level == 'index':
-                    continue
-                f.write(f"{level}: 趋势={data.get('trend')}, 信号={data.get('signal')}, 背驰={data.get('beichi')}\n")
-            
-            f.write(f"\n--- 交易信号 ---\n")
-            signal = result['signal']
-            f.write(f"行动: {signal['action']}\n")
-            f.write(f"理由: {signal['reason']}\n")
-            f.write(f"信心度: {signal['confidence']}\n")
-            f.write(f"止损位: {signal['stop_loss']}\n")
-            
-            f.write(f"\n--- 分析图表 ---\n")
-            for level, level_result in result['level_results'].items():
-                chart_path = level_result.get('chart_path', '')
-                if chart_path:
-                    f.write(f"{level}级别图表: {chart_path}\n")
-            
-            if 'llm_analysis' in result and 'result' in result['llm_analysis']:
-                f.write(f"\n--- LLM增强分析 ---\n")
-                f.write(result['llm_analysis']['result'])
-        
-        logger.info(f"分析结果已保存到: {output_file}")
+            logger.info(f"分析结果已保存到: {output_file}")
+        except Exception as e:
+            logger.error(f"保存分析结果文件时出错: {str(e)}")
 
     def run_analysis(self, save_path=None) -> Dict:
         """
@@ -1414,41 +1643,51 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         """
         logger.info(f"开始对{self.stock_code} {self.stock_name}执行缠论分析...")
         
-        # 获取多级别数据
-        self.get_multi_level_data()
-        
-        # 分析各个级别
-        level_results = {}
-        for level in self.levels:
-            if level in self.level_data and not self.level_data[level].empty:
-                level_results[level] = self.analyze_level(level)
-        
-        # 构建多级别趋势矩阵
-        self.build_trend_matrix()
-        
-        # 生成交易信号
-        signal = self.generate_signal()
-        
-        # LLM增强分析
-        llm_analysis = self.llm_enhance_analysis()
-        
-        # 汇总分析结果
-        self.analysis_result = {
-            'stock_code': self.stock_code,
-            'stock_name': self.stock_name,
-            'analysis_date': self.end_date.strftime('%Y-%m-%d'),
-            'levels': self.levels,
-            'level_results': level_results,
-            'trend_matrix': self.trend_matrix.to_dict(),
-            'signal': signal,
-            'llm_analysis': llm_analysis,
-            'description': f"{self.stock_name}({self.stock_code})多级别缠论分析",
-            'chart_path': level_results.get('daily', {}).get('chart_path', '')
-        }
-        
-        # 保存分析结果
-        self.save_analysis_result()
-        self.output_chan_result(self.analysis_result)
-        logger.info(f"完成{self.stock_code} {self.stock_name}的缠论分析")
-        
-        return self.analysis_result
+        try:
+            # 获取多级别数据
+            self.get_multi_level_data()
+            
+            # 分析各个级别
+            level_results = {}
+            for level in self.levels:
+                if level in self.level_data and not self.level_data[level].empty:
+                    level_results[level] = self.analyze_level(level)
+            
+            # 构建多级别趋势矩阵
+            self.build_trend_matrix()
+            
+            # 生成交易信号
+            signal = self.generate_signal()
+            
+            # LLM增强分析
+            llm_analysis = self.llm_enhance_analysis()
+            
+            # 汇总分析结果
+            self.analysis_result = {
+                'stock_code': self.stock_code,
+                'stock_name': self.stock_name,
+                'analysis_date': self.end_date.strftime('%Y-%m-%d'),
+                'levels': self.levels,
+                'level_results': level_results,
+                'trend_matrix': self.trend_matrix.to_dict(),
+                'signal': signal,
+                'llm_analysis': llm_analysis,
+                'description': f"{self.stock_name}({self.stock_code})多级别缠论分析",
+                'chart_path': level_results.get('daily', {}).get('chart_path', '')
+            }
+            
+            # 保存分析结果
+            self.save_analysis_result()
+            self.output_chan_result(self.analysis_result)
+            logger.info(f"完成{self.stock_code} {self.stock_name}的缠论分析")
+            
+            return self.analysis_result
+        except Exception as e:
+            logger.error(f"执行缠论分析过程中出错: {str(e)}")
+            return {
+                'stock_code': self.stock_code,
+                'stock_name': self.stock_name,
+                'analysis_date': self.end_date.strftime('%Y-%m-%d'),
+                'error': str(e),
+                'description': f"{self.stock_name}({self.stock_code})分析出错，无法显示结果。"
+            }
