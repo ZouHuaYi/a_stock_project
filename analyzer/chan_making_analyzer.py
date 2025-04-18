@@ -39,7 +39,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
     """
     
     def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
-                 days: int = 365 * 2, levels: List[str] = None):
+                 days: int = 365, levels: List[str] = None):
         """
         初始化缠论分析器
         
@@ -63,6 +63,14 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         self.signals = {}  # 买卖点信号
         self.trend_matrix = pd.DataFrame()  # 趋势状态矩阵
         
+        # 获取数据 map
+        self.data_min_map = {
+            "30min": 30,
+            "5min": 5,
+            "1min": 1
+        }
+
+
         # 设置图表保存路径
         self.chart_path = os.path.join(PATH_CONFIG.get('output_path', './output'), 'analyzer')
         os.makedirs(self.chart_path, exist_ok=True)
@@ -104,30 +112,24 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                         # 一天有 8 个 30 分钟
                         # 一天有 48 个 5 分钟
                         # 一天有 240 个 1 分钟
-                        # 实际实现可能有所不同，取决于数据源的API
-                        # 计算每个级别需要的天数，使k线数量相等
-                        # 假设需要240根k线
-                        # 30分钟: 240 / (8根/天) = 30天
-                        # 5分钟: 240 / (48根/天) = 5天
-                        # 1分钟: 240 / (240根/天) = 1天
 
                         if level == "30min":
                             minute_data = akshare.get_stock_history_min(
                                 stock_code=self.stock_code,
                                 period="30",  # 期间可能需要调整为实际API支持的参
-                                days=30 * 2
+                                days=self.data_min_map[level]
                             )
                         elif level == "5min":
                             minute_data = akshare.get_stock_history_min(
                                 stock_code=self.stock_code,
                                 period="5",
-                                days=5 * 2
+                                days=self.data_min_map[level]
                             )
                         elif level == "1min":
                             minute_data = akshare.get_stock_history_min(
                                 stock_code=self.stock_code,
                                 period="1",
-                                days=1 * 2
+                                days=self.data_min_map[level]
                             )
                         else:
                             minute_data = pd.DataFrame()
@@ -262,7 +264,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             prev = result_df.iloc[i-1]
             curr = result_df.iloc[i]
             next = result_df.iloc[i+1]
-            
             
             # 判断包含关系
             if (curr['high'] >= prev['high'] and curr['low'] <= prev['low']) or \
@@ -419,14 +420,13 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         bi_points = result_df[(result_df['bi_start']) | (result_df['bi_end'])].sort_index()
         
         if len(bi_points) < 3:
-            return result
+            return result_df
             
         # 线段识别逻辑
         xianduan_points = []
         direction = None  # 1:向上, -1:向下
         start_idx = None
-        start_price = None
-        
+
         for i in range(len(bi_points)-2):
             current = bi_points.iloc[i]
             next1 = bi_points.iloc[i+1]
@@ -437,11 +437,9 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                 if current['bi_type'] == 'bottom' and next1['bi_type'] == 'top':
                     direction = 1
                     start_idx = current.name
-                    start_price = current['low']
                 elif current['bi_type'] == 'top' and next1['bi_type'] == 'bottom':
                     direction = -1
                     start_idx = current.name
-                    start_price = current['high']
                 else:
                     continue
                     
@@ -456,7 +454,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                         xianduan_points.append((next1.name, 'top'))
                         direction = -1
                         start_idx = next1.name
-                        start_price = next1['low']
                         
             # 向下线段中的处理
             elif direction == -1:
@@ -469,7 +466,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                         xianduan_points.append((next1.name, 'bottom'))
                         direction = 1
                         start_idx = next1.name
-                        start_price = next1['high']
         
         # 标记最后一个线段
         if direction is not None and start_idx is not None:

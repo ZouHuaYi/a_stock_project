@@ -31,13 +31,13 @@ class BaseAnalyzer:
             days (int, 可选): 回溯天数，默认使用配置中的默认值
         """
         self.stock_code = stock_code
-        self.stock_name = stock_name if stock_name else stock_code
         self.daily_data = pd.DataFrame() # 股票日线数据
         self.indicators = {} # 技术指标
         self.tavily_api = TavilyAPI() # 新闻搜索
         self.llm_api = LLMAPI() # 大模型
-        
+        self.stock_name = stock_name if stock_name else stock_code
         # 处理end_date参数
+        
         if end_date:
             if isinstance(end_date, str):
                 try:
@@ -75,9 +75,7 @@ class BaseAnalyzer:
         返回:
             str: 股票名称
         """
-        if self.stock_name and self.stock_name != self.stock_code:
-            return self.stock_name
-            
+        # 不再检查self.stock_name，避免循环引用
         try:
             from utils.akshare_api import AkshareAPI
             
@@ -85,7 +83,6 @@ class BaseAnalyzer:
             name = akshare.get_stock_name(self.stock_code)
             
             if name and name != self.stock_code:
-                self.stock_name = name
                 return name
             else:
                 logger.warning(f"未能获取股票 {self.stock_code} 的名称")
@@ -106,7 +103,7 @@ class BaseAnalyzer:
             from utils.akshare_api import AkshareAPI
             
             akshare = AkshareAPI()
-            
+            self.stock_name = self.get_stock_name()
             # 获取历史数据
             years = self.days // 365 + 1 # 向上取整，确保获取足够的数据
             
