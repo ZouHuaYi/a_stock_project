@@ -168,13 +168,8 @@ def handle_analyzer(args):
             logger.error(f"未知的分析器类型: {analyzer_type}")
             return
         
-        # 保存分析结果
-        if args.output:
-            output_file = args.output
-        else:
-            output_file = f"{stock_code}_{analyzer_type}_{datetime.now().strftime('%Y%m%d')}"
         # 执行分析
-        result = analyzer.run_analysis(save_path=output_file)
+        result = analyzer.run_analysis(save_path=args.output)
         
         if result:
             # 输出图表路径

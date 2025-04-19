@@ -64,8 +64,8 @@ class BaseAnalyzer:
         self.data = pd.DataFrame()
         self.analysis_result = {}
         
-        # 设置统一的保存路径
-        self.save_path = PATH_CONFIG.get('analyzer_path')
+        # 设置统一的保存路径 股票代码/当前运行日期/分析器名称
+        self.save_path = os.path.join(PATH_CONFIG.get('analyzer_path'), self.stock_code, datetime.now().strftime('%Y%m%d'))
         os.makedirs(self.save_path, exist_ok=True)
     
     def get_stock_name(self) -> str:

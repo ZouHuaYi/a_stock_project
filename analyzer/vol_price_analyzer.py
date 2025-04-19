@@ -209,7 +209,7 @@ class VolPriceAnalyzer(BaseAnalyzer):
             return False
 
         if save_filename is None:
-            save_filename = f"{self.stock_code}_洗盘分析_{self.end_date.strftime('%Y%m%d')}.png"
+            save_filename = f"{self.__class__.__name__}_洗盘分析.png"
         else:
             save_filename = f"{save_filename}.png"
             

@@ -186,7 +186,7 @@ class AiAnalyzer(BaseAnalyzer):
             return False
 
         if save_filename is None:
-            save_filename = f"{self.stock_code}_技术分析_{self.end_date.strftime('%Y%m%d')}.png"
+            save_filename = f"{self.__class__.__name__}_技术分析.png"
         
         save_path = os.path.join(self.save_path, save_filename)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -223,7 +223,7 @@ class AiAnalyzer(BaseAnalyzer):
             return False
         
         if save_filename is None:
-            save_filename = f"{self.stock_code}_词云_{self.end_date.strftime('%Y%m%d')}.png"
+            save_filename = f"{self.__class__.__name__}_词云.png"
         
         save_path = os.path.join(self.save_path, save_filename)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -397,7 +397,7 @@ class AiAnalyzer(BaseAnalyzer):
         """保存分析报告到文件"""
         try:
             if filename is None:
-                filename = f"{self.stock_code}_分析报告_{self.end_date.strftime('%Y%m%d')}.txt"
+                filename = f"{self.__class__.__name__}_分析报告.txt"
             
             save_path = os.path.join(self.save_path, filename)
             os.makedirs(os.path.dirname(save_path), exist_ok=True)

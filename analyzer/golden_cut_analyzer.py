@@ -127,7 +127,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 return False
         
         if save_filename is None:
-            save_filename = f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.png"
+            save_filename = f"{self.__class__.__name__}_斐波那契.png"
             
         save_path = os.path.join(self.save_path, save_filename)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -391,7 +391,7 @@ class GoldenCutAnalyzer(BaseAnalyzer):
                 'description': analysis_summary
             }
             
-            path_txt = os.path.join(self.save_path, f"{self.stock_code}_斐波那契_{self.end_date.strftime('%Y%m%d')}.txt")
+            path_txt = os.path.join(self.save_path, f"{self.__class__.__name__}_斐波那契.txt")
             # 保存分析结果到 txt 文件，处理中文乱码问题
             with open(path_txt, 'w', encoding='utf-8') as f:
                 f.write(analysis_summary)

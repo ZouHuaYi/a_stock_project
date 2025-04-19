@@ -230,7 +230,9 @@ class StockDataUpdater:
             end_date_fmt = datetime.strptime(end_date, '%Y%m%d').strftime('%Y-%m-%d')
             
             sql = f"""
-                SELECT * FROM stock_daily 
+                SELECT stock_code, trade_date, open, high, low, close, volume, amount, 
+                       change_percent, change_amount, turnover_rate, amplitude 
+                FROM stock_daily 
                 WHERE stock_code = '{stock_code}' 
                 AND trade_date BETWEEN '{start_date_fmt}' AND '{end_date_fmt}'
             """
@@ -470,19 +472,23 @@ class StockDataUpdater:
                     daily_data = self._fetch_stock_daily(stock_code, start_date, end_date)
                     
                     if not daily_data.empty:
+                        # 重要修改：移除 id 列，让数据库自动生成 id
+                        if 'id' in daily_data.columns:
+                            daily_data = daily_data.drop(columns=['id'])
+                        
                         # 更新日线数据，使用append而不是replace
                         self.db_manager.to_sql(daily_data, 'stock_daily', if_exists='append', index=False)
                         
-                        # 删除重复数据
+                        # 删除重复数据（按股票代码和交易日期）
                         sql = """
                             DELETE t1 FROM stock_daily t1
                             INNER JOIN (
-                                SELECT stock_code, trade_date, MAX(id) as max_id
+                                SELECT stock_code, trade_date, MIN(id) as min_id
                                 FROM stock_daily
                                 GROUP BY stock_code, trade_date
                                 HAVING COUNT(*) > 1
                             ) t2 ON t1.stock_code = t2.stock_code AND t1.trade_date = t2.trade_date
-                            WHERE t1.id < t2.max_id
+                            WHERE t1.id > t2.min_id
                         """
                         self.db_manager.execute_and_commit(sql)
                         

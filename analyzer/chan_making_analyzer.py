@@ -69,11 +69,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             "5min": 5,
             "1min": 1
         }
-
-
-        # 设置图表保存路径
-        self.chart_path = os.path.join(PATH_CONFIG.get('output_path', './output'), 'analyzer')
-        os.makedirs(self.chart_path, exist_ok=True)
     
     def get_multi_level_data(self) -> Dict[str, pd.DataFrame]:
         """
@@ -1394,8 +1389,8 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         plt.subplots_adjust(top=0.9)
         
         # 保存图表
-        chart_filename = f"{self.stock_code}_{level}_{self.end_date_str}_chan.png"
-        chart_path = os.path.join(self.chart_path, chart_filename)
+        chart_filename = f"{self.__class__.__name__}_{level}.png"
+        chart_path = os.path.join(self.save_path, chart_filename)
         plt.savefig(chart_path, dpi=300)
         plt.close()
         
@@ -1597,7 +1592,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         # 输出缠论分析结果
         # 将分析结果输出到txt文件
         try:
-            output_file = os.path.join(self.chart_path, f"{self.stock_code}_chanMaking_{self.end_date_str}.txt")
+            output_file = os.path.join(self.save_path, f"{self.__class__.__name__}_缠论分析.txt")
             with open(output_file, 'w', encoding='utf-8') as f:
                 f.write(f"\n=== 缠论分析结果摘要 ===\n")
                 f.write(f"股票: {result['stock_name']}({result['stock_code']})\n")
