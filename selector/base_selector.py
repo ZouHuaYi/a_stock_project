@@ -71,10 +71,11 @@ class BaseSelector(ABC):
             
         # 生成文件名
         if not filename:
-            filename = f"stock_selection_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            filename = f"{self.__class__.__name__}.csv"
             
         # 完整路径
-        filepath = os.path.join(PATH_CONFIG['selector_path'], filename)
+        filepath = os.path.join(PATH_CONFIG['selector_path'], datetime.now().strftime('%Y%m%d'), filename)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         # 保存结果
         results.to_csv(filepath, index=False, encoding='utf-8-sig')

@@ -1397,6 +1397,93 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         logger.info(f"已保存{level}级别缠论分析图表到 {chart_path}")
         return chart_path
     
+    def combine_chan_charts(self) -> str:
+        """
+        将多个级别的缠论分析图表合并到一个图片中
+        
+        返回:
+            str: 合并后的图表路径
+        """
+        try:
+            import matplotlib.image as mpimg
+            from matplotlib.gridspec import GridSpec
+            
+            # 检查各级别图表是否存在
+            chart_paths = {}
+            for level in self.levels:
+                chart_filename = f"{self.__class__.__name__}_{level}.png"
+                chart_path = os.path.join(self.save_path, chart_filename)
+                if os.path.exists(chart_path):
+                    chart_paths[level] = chart_path
+            
+            if not chart_paths:
+                logger.warning("没有找到任何级别的缠论分析图表，无法合并")
+                return ""
+            
+            # 计算合并图表的布局
+            num_charts = len(chart_paths)
+            if num_charts == 1:
+                rows, cols = 1, 1
+            elif num_charts == 2:
+                rows, cols = 1, 2
+            elif num_charts <= 4:
+                rows, cols = 2, 2
+            else:
+                rows = (num_charts + 2) // 3  # 向上取整
+                cols = 3
+                
+            # 创建合并后的图表
+            fig = plt.figure(figsize=(20, 15 * rows / 2))  # 根据行数调整高度
+            gs = GridSpec(rows, cols, figure=fig)
+            
+            # 设置总标题
+            fig.suptitle(f"{self.stock_code} {self.stock_name} 多级别缠论分析", fontsize=24)
+            
+            # 按照级别顺序排列图表
+            sorted_levels = sorted(chart_paths.keys(), 
+                                key=lambda x: ["daily", "30min", "5min", "1min"].index(x) 
+                                if x in ["daily", "30min", "5min", "1min"] else 99)
+            
+            # 读取并放置各个图表
+            for i, level in enumerate(sorted_levels):
+                row = i // cols
+                col = i % cols
+                
+                # 读取图像
+                img = mpimg.imread(chart_paths[level])
+                
+                # 创建子图并显示图像
+                ax = fig.add_subplot(gs[row, col])
+                ax.imshow(img)
+                ax.set_title(f"{level}级别", fontsize=18)
+                ax.axis('off')  # 关闭坐标轴
+            
+            # 调整布局
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.95)  # 为总标题留出空间
+            
+            # 保存合并后的图表
+            combined_chart_filename = f"{self.__class__.__name__}_缠论级别.png"
+            combined_chart_path = os.path.join(self.save_path, combined_chart_filename)
+            plt.savefig(combined_chart_path, dpi=300)
+            plt.close()
+            
+            # 删除原来的单级别图表文件
+            for level_path in chart_paths.values():
+                try:
+                    os.remove(level_path)
+                    logger.info(f"已删除单级别图表文件: {level_path}")
+                except Exception as e:
+                    logger.warning(f"删除图表文件失败: {level_path}, 错误: {str(e)}")
+            
+            logger.info(f"已将{num_charts}个级别的缠论分析图表合并保存到 {combined_chart_path}")
+            
+            return combined_chart_path
+            
+        except Exception as e:
+            logger.error(f"合并缠论分析图表时出错: {str(e)}")
+            return ""
+
     def llm_enhance_analysis(self) -> Dict:
         """
         使用LLM增强分析结果
@@ -1444,8 +1531,14 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             
             min5_analysis = f"趋势:{min5_trend}, 信号:{min5_signal if min5_signal else '无'}"
         
+        current_price = self.level_data["daily"].iloc[-1]['close']
         # 构建LLM提示词
         prompt = f"""基于以下缠论分析结果给出建议：
+            股票代码：{self.stock_code}
+            股票名称：{self.stock_name}
+            分析日期：{self.end_date_str}
+            当前价格：{current_price}
+
             1. 日线级别：{daily_analysis}
             2. 30分钟级别：{min30_analysis} 
             3. 5分钟级别：{min5_analysis}
@@ -1611,12 +1704,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                 f.write(f"信心度: {signal['confidence']}\n")
                 f.write(f"止损位: {signal['stop_loss']}\n")
                 
-                f.write(f"\n--- 分析图表 ---\n")
-                for level, level_result in result.get('level_results', {}).items():
-                    chart_path = level_result.get('chart_path', '')
-                    if chart_path:
-                        f.write(f"{level}级别图表: {chart_path}\n")
-                
                 if 'llm_analysis' in result and 'result' in result['llm_analysis']:
                     f.write(f"\n--- LLM增强分析 ---\n")
                     f.write(result['llm_analysis']['result'])
@@ -1650,6 +1737,9 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             # 生成交易信号
             signal = self.generate_signal()
             
+            # 合并各级别图表
+            combined_chart_path = self.combine_chan_charts()
+            
             # LLM增强分析
             llm_analysis = self.llm_enhance_analysis()
             
@@ -1664,7 +1754,8 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                 'signal': signal,
                 'llm_analysis': llm_analysis,
                 'description': f"{self.stock_name}({self.stock_code})多级别缠论分析",
-                'chart_path': level_results.get('daily', {}).get('chart_path', '')
+                'chart_path': level_results.get('daily', {}).get('chart_path', ''),
+                'combined_chart_path': combined_chart_path
             }
             
             # 保存分析结果
