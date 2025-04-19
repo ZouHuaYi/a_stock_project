@@ -1533,12 +1533,14 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         
         current_price = self.level_data["daily"].iloc[-1]['close']
         # 构建LLM提示词
-        prompt = f"""基于以下缠论分析结果给出建议：
+        prompt = f"""
+            ## 基本信息：
             股票代码：{self.stock_code}
             股票名称：{self.stock_name}
             分析日期：{self.end_date_str}
             当前价格：{current_price}
-
+            
+            ## 缠论分析结果：
             1. 日线级别：{daily_analysis}
             2. 30分钟级别：{min30_analysis} 
             3. 5分钟级别：{min5_analysis}
