@@ -31,6 +31,10 @@
 - logs 日志文件
 - selector 选股模块
 - utils 工具模块
+  - llm_api.py 提供 LLM API 接口
+  - akshare_api.py 提供 akshare API 接口
+  - tavily_api.py 提供 tavily API 接口
+  - task_runner.py 提供任务调度器
 - run.py 主程序入口, 运行程序cli
 - api.py 提供 API 接口
 - requirements.txt 依赖库
