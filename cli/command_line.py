@@ -26,12 +26,15 @@ def parse_args():
     
     # 选股子命令
     select_parser = subparsers.add_parser('selector', help='选股功能')
-    select_parser.add_argument('selector_type', choices=['volume', 'chan', 'ma240'], 
+    select_parser.add_argument('selector_type', choices=['volume', 'chan', 'ma240', 'subject'], 
                               default='volume', nargs='?', help='选股器类型')
     select_parser.add_argument('--days', type=int, help='回溯数据天数')
     select_parser.add_argument('--threshold', type=float, help='选股分数阈值')
     select_parser.add_argument('--limit', type=int, help='限制结果数量')
     select_parser.add_argument('--output', help='输出文件名')
+    select_parser.add_argument('--text', help='题材选股的分析文本内容')
+    select_parser.add_argument('--ai-type', choices=['gemini', 'openai'], 
+                              default='openai', help='题材选股使用的AI类型')
     
     # 分析子命令
     analyzer_parser = subparsers.add_parser('analyzer', help='股票分析功能')
@@ -69,6 +72,10 @@ def parse_args():
         if len(sys.argv) < 4:
             analyzer_parser.error("analyzer命令需要提供分析器类型和股票代码两个参数")
     
+    # 检查题材选股必要参数
+    if args.command == 'selector' and args.selector_type == 'subject' and not args.text:
+        select_parser.error("使用题材选股器需要提供--text参数指定分析文本")
+    
     return args
 
 
@@ -93,6 +100,15 @@ def handle_select(args):
         elif selector_type == 'ma240':
             from selector.ma240_selector import Ma240Selector
             selector = Ma240Selector(days=args.days, threshold=args.threshold, limit=args.limit)
+        elif selector_type == 'subject':
+            from selector.subject_selector import SubjectSelector
+            selector = SubjectSelector(
+                days=args.days, 
+                threshold=args.threshold, 
+                limit=args.limit,
+                text=args.text,
+                ai_type=args.ai_type
+            )
         else:
             logger.error(f"未知的选股器类型: {selector_type}")
             return

@@ -4,5 +4,6 @@
 from selector.base_selector import BaseSelector
 from selector.volume_selector import VolumeSelector
 from selector.chan_selector import ChanSelector
+from selector.subject_selector import SubjectSelector
 
-__all__ = ['BaseSelector', 'VolumeSelector', 'ChanSelector'] 
+__all__ = ['BaseSelector', 'VolumeSelector', 'ChanSelector', 'SubjectSelector'] 
