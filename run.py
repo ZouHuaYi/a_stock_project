@@ -4,12 +4,15 @@
 A股选股与分析工具 - 主入口文件
 
 使用方法:
-    - 选股功能: python run.py select [volume|chan] [--options]
-    - 分析功能: python run.py analyze [volprice|golden|deepseek] [股票代码] [--options]
-      例如: python run.py analyze golden 000001  # 对000001进行黄金分割分析
-           python run.py analyze volprice 600001  # 对600001进行量价分析
-           python run.py analyze openai 300059  # 对300059进行AI深度分析
+    - 选股功能: python run.py selector [volume|chan|ma240] [--options]
+    - 分析功能: python run.py analyzer [volprice|golden|openai|chan] [股票代码] [--options]
+      例如: python run.py analyzer golden 000001  # 对000001进行黄金分割分析
+           python run.py analyzer volprice 600001  # 对600001进行量价分析
+           python run.py analyzer openai 300059  # 对300059进行AI深度分析
     - 更新数据: python run.py update [--basic] [--daily] [--full]
+    - 汇总分析: python run.py collect [business] [--date YYYYMMDD] [--output 文件名]
+      例如: python run.py collect business  # 分析当天选股结果的行业与业务关系
+           python run.py collect business --date 20250419  # 分析指定日期的选股结果
     
 注意：股票代码必须是6位数字，如000001、600001等
 

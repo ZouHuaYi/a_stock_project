@@ -53,6 +53,13 @@ def parse_args():
     update_parser.add_argument('--start-date', help='开始日期，格式：YYYYMMDD')
     update_parser.add_argument('--end-date', help='结束日期，格式：YYYYMMDD')
     
+    # 添加CSV业务分析子命令
+    collect_parser = subparsers.add_parser('collect', help='选股结果汇总分析')
+    collect_parser.add_argument('collect_type', choices=['business'], 
+                              default='business', nargs='?', help='汇总分析类型')
+    collect_parser.add_argument('--date', help='指定日期(格式：YYYYMMDD)，默认为当天')
+    collect_parser.add_argument('--output', help='输出文件名(不含扩展名)')
+    
     # 解析命令行参数
     args = parser.parse_args()
     
@@ -209,13 +216,84 @@ def handle_update(args):
         logger.error(f"执行数据更新过程中出错: {str(e)}")
 
 
+def handle_collect(args):
+    """
+    处理选股结果汇总分析命令
+    
+    参数:
+        args (argparse.Namespace): 命令行参数
+    """
+    collect_type = args.collect_type
+    logger.info(f"开始执行{collect_type}汇总分析...")
+    
+    try:
+        if collect_type == 'business':
+            from collect.csv_business import CSVBusinessAnalyzer
+            
+            # 创建分析器实例
+            analyzer = CSVBusinessAnalyzer()
+            
+            # 如果指定了日期，则使用指定日期目录
+            if args.date:
+                # 验证日期格式
+                if not re.match(r'^\d{8}$', args.date):
+                    logger.error(f"日期格式无效: {args.date}，正确格式应为YYYYMMDD")
+                    return
+                
+                custom_dir = os.path.join(analyzer.selector_path, args.date)
+                if not os.path.exists(custom_dir):
+                    logger.error(f"指定日期目录不存在: {custom_dir}")
+                    return
+                
+                csv_files = analyzer.get_csv_files(custom_dir)
+            else:
+                # 使用当天日期
+                csv_files = analyzer.get_csv_files()
+            
+            if not csv_files:
+                logger.warning("没有找到CSV文件，分析终止")
+                return
+            
+            # 解析CSV文件
+            stocks_data = analyzer.parse_csv_files(csv_files)
+            if not stocks_data:
+                logger.warning("没有解析到有效的股票数据，分析终止")
+                return
+            
+            # 分析业务关系
+            analysis_result = analyzer.analyze_business_relationships(stocks_data)
+            if not analysis_result:
+                logger.warning("生成业务分析结果失败，分析终止")
+                return
+            
+            # 保存分析结果
+            if args.output:
+                # 使用指定的输出文件名
+                today = datetime.now().strftime('%Y%m%d')
+                result_file = os.path.join(analyzer.collect_path, f"{args.output}_{today}.txt")
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    f.write(analysis_result)
+                logger.info(f"分析结果已保存至: {result_file}")
+            else:
+                # 使用默认输出名称
+                result_file = analyzer.save_analysis_result(analysis_result)
+                if result_file:
+                    logger.info(f"CSV业务分析完成，结果保存在: {result_file}")
+                else:
+                    logger.warning("保存分析结果失败")
+        else:
+            logger.error(f"未知的汇总分析类型: {collect_type}")
+    except Exception as e:
+        logger.error(f"执行汇总分析过程中出错: {str(e)}")
+
+
 def main():
     """
     主函数，入口点
     """
     # 解析命令行参数
     args = parse_args()
-    print(args)
+    
     # 根据命令执行相应功能
     if args.command == 'selector':
         handle_select(args)
@@ -223,6 +301,8 @@ def main():
         handle_analyzer(args)
     elif args.command == 'update':
         handle_update(args)
+    elif args.command == 'collect':
+        handle_collect(args)
     else:
         # 如果没有指定命令，显示帮助
         print("请指定要执行的命令，使用 -h 或 --help 获取帮助")
