@@ -13,6 +13,7 @@ from selector.base_selector import BaseSelector
 from utils.llm_api import LLMAPI
 from utils.akshare_api import AkshareAPI
 from utils.logger import get_logger
+from utils.tavily_api import TavilyAPI
 
 # 创建日志记录器
 logger = get_logger(__name__)
@@ -94,12 +95,22 @@ class SubjectSelector(BaseSelector):
         concept_names = list(self.concept_stocks.keys())
         concepts_text = "、".join(concept_names[:30])  # 取前30个作为参考示例
         
+        # 由于模型数据有时间限制，想先使用 tavily 获取相关信息
+        tavily_api = TavilyAPI()
+        tavily_response = tavily_api.search_base_news(payload={
+            "query": text,
+            "search_depth": "basic",  
+            "max_results": 10, 
+        })
+        
         # 构建提示词
         prompt = f"""
 作为股票市场分析专家，请从以下文本中识别出与A股市场相关的投资题材或概念。
 请参考以下概念板块名称：{concepts_text}等。
 
-分析文本: {text}
+分析原文本: {text}
+
+分析 tavily 获取的新闻: {tavily_response}
 
 请分析出最相关的3-5个投资题材概念，直接以逗号分隔的方式输出概念名称，无需其他解释。如果提取不到相关题材，请返回'无相关题材'。
 """
@@ -110,7 +121,8 @@ class SubjectSelector(BaseSelector):
                 response = self.llm_api.generate_gemini_response(prompt)
             else:
                 response = self.llm_api.generate_openai_response(prompt)
-                
+
+            logger.info(f"LLM分析结果: {response}")
             # 处理响应结果
             if response:
                 concepts = [concept.strip() for concept in response.split(',')]
