@@ -65,7 +65,7 @@ class BaseAnalyzer:
         self.analysis_result = {}
         
         # 设置统一的保存路径 股票代码/当前运行日期/分析器名称
-        self.save_path = os.path.join(PATH_CONFIG.get('analyzer_path'), self.stock_code, datetime.now().strftime('%Y%m%d'))
+        self.save_path = os.path.join(PATH_CONFIG.get('analyzer_path'), datetime.now().strftime('%Y%m%d'), self.stock_code)
         os.makedirs(self.save_path, exist_ok=True)
     
     def get_stock_name(self) -> str:
