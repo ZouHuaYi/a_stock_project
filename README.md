@@ -235,3 +235,25 @@ a_stock_project/
 ├── run.py                     # 黄金分割分析器测试脚本
 └── README.md                  # 项目说明文档
 ``` 
+
+## API模块结构
+
+1、api/_init_.py - API模块的初始化文件
+2、api/models.py - 包含所有API使用的Pydantic模型
+3、api/app.py - API应用工厂，创建和配置FastAPI应用
+4、api/routes/ - 包含所有API路由的模块
+    - api/routes/_init_.py - 路由模块初始化文件
+    - api/routes/stocks.py - 股票信息相关路由
+    - api/routes/analyze.py - 股票分析相关路由
+    - api/routes/select.py - 股票选择相关路由
+    - api/routes/files.py - 文件操作相关路由
+    - api/routes/update.py - 数据更新相关路由
+5、api.py - 主入口文件，现在变得非常简洁，只负责导入和启动API应用
+#### 这种结构的优点：
+1、模块化 - 每个功能都有自己的模块，便于维护和扩展
+2、关注点分离 - 路由、模型和应用创建逻辑分离
+3、代码复用 - 共用模型和功能可以在多个地方使用
+4、可测试性 - 每个组件可以单独测试
+5、可扩展性 - 可以轻松添加新的路由和功能
+
+现在，API服务更容易维护和扩展，功能也保持完整。如果需要添加新的API功能，只需要在routes目录中创建新的路由文件，并在app.py中注册即可。
