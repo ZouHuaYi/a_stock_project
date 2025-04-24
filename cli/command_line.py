@@ -26,7 +26,7 @@ def parse_args():
     
     # 选股子命令
     select_parser = subparsers.add_parser('selector', help='选股功能')
-    select_parser.add_argument('selector_type', choices=['volume', 'chan', 'ma240', 'subject'], 
+    select_parser.add_argument('selector_type', choices=['volume', 'chan', 'ma240', 'subject', 'chanbc'], 
                               default='volume', nargs='?', help='选股器类型')
     select_parser.add_argument('--days', type=int, help='回溯数据天数')
     select_parser.add_argument('--threshold', type=float, help='选股分数阈值')
@@ -109,6 +109,9 @@ def handle_select(args):
                 text=args.text,
                 ai_type=args.ai_type
             )
+        elif selector_type == 'chanbc':
+            from selector.chanbc_selector import ChanBackchSelector
+            selector = ChanBackchSelector(days=args.days, threshold=args.threshold, limit=args.limit)
         else:
             logger.error(f"未知的选股器类型: {selector_type}")
             return
