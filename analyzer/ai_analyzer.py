@@ -277,22 +277,49 @@ class AiAnalyzer(BaseAnalyzer):
 
             分析参考：{report}
 
-            请分析：1.技术面评估 2.基本面简评 3.舆情分析 4.投资建议 5.风险提示
-            尽量简洁，总字数控制在1500字以内。
+            请分析：
+            1.技术面评估 
+            2.基本面简评 
+            3.舆情分析 
+            4.风险提示
+
+            总结给出投资操作方案：
+            请用专业术语回答：
+            - 当前多级别联立状态
+            - 最优交易策略
+            - 风控位设置依据
             """
-            # 使用AI模型进行分析
-            if self.ai_type == "openai":
-                analysis_report = self.llm_api.generate_openai_response(prompt)
-            elif self.ai_type == "gemini":
-                analysis_report = self.llm_api.generate_gemini_response(prompt)
-            else:
-                raise ValueError(f"不支持的AI模型类型: {self.ai_type}")
             
-            # 存储报告
-            self.analysis_report = analysis_report.strip()
+            # 使用AI模型进行分析，最多尝试3次
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                try:
+                    if self.ai_type == "openai":
+                        analysis_report = self.llm_api.generate_openai_response(prompt)
+                    elif self.ai_type == "gemini":
+                        analysis_report = self.llm_api.generate_gemini_response(prompt)
+                    else:
+                        raise ValueError(f"不支持的AI模型类型: {self.ai_type}")
+                    
+                    # 检查返回结果是否有效
+                    if analysis_report and len(analysis_report.strip()) > 50:
+                        # 存储报告
+                        self.analysis_report = analysis_report.strip()
+                        logger.info(f"成功生成 {self.stock_code} 的AI分析报告 (尝试 {attempt}/{max_retries})")
+                        return self.analysis_report
+                    else:
+                        logger.warning(f"AI返回结果为空或过短，第 {attempt}/{max_retries} 次尝试失败")
+                        if attempt < max_retries:
+                            logger.info(f"准备第 {attempt + 1} 次重试...")
+                except Exception as e:
+                    logger.error(f"AI分析第 {attempt}/{max_retries} 次尝试出错: {e}")
+                    if attempt < max_retries:
+                        logger.info(f"准备第 {attempt + 1} 次重试...")
             
-            logger.info(f"成功生成 {self.stock_code} 的AI分析报告")
-            return self.analysis_report
+            # 所有重试都失败
+            error_msg = f"经过 {max_retries} 次尝试后未能获取有效的AI分析结果"
+            logger.error(error_msg)
+            return error_msg
             
         except Exception as e:
             error_msg = f"AI分析出错: {e}"
