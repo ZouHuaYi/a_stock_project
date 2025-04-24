@@ -38,7 +38,7 @@ def parse_args():
     
     # 分析子命令
     analyzer_parser = subparsers.add_parser('analyzer', help='股票分析功能')
-    analyzer_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'openai', 'chan'], 
+    analyzer_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'ai', 'chan'], 
                                default='volprice', nargs='?', help='分析器类型')
     analyzer_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
     analyzer_parser.add_argument('--days', type=int, help='回溯数据天数')
@@ -167,7 +167,7 @@ def handle_analyzer(args):
                 end_date=args.end_date, 
                 days=args.days
             )
-        elif analyzer_type == 'openai':
+        elif analyzer_type == 'ai':
             from analyzer.ai_analyzer import AiAnalyzer
             if args.ai_type:
                 ai_type = args.ai_type
