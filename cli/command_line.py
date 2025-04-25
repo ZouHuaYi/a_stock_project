@@ -39,7 +39,7 @@ def parse_args():
     
     # 分析子命令
     analyzer_parser = subparsers.add_parser('analyzer', help='股票分析功能')
-    analyzer_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'ai', 'chan'], 
+    analyzer_parser.add_argument('analyzer_type', choices=['volprice', 'golden', 'ai', 'chan', 'news'], 
                                default='volprice', nargs='?', help='分析器类型')
     analyzer_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
     analyzer_parser.add_argument('--days', type=int, help='回溯数据天数')
@@ -47,6 +47,8 @@ def parse_args():
     analyzer_parser.add_argument('--save-chart', action='store_true', default=True, help='保存图表')
     analyzer_parser.add_argument('--output', help='输出文件名(不含扩展名)')
     analyzer_parser.add_argument('--ai-type', choices=['gemini', 'openai'], help='AI类型')
+    analyzer_parser.add_argument('--sites', help='新闻分析指定网站(逗号分隔)')
+    analyzer_parser.add_argument('--max-results', type=int, default=10, help='新闻分析返回的最大结果数')
     
     # 更新数据子命令
     update_parser = subparsers.add_parser('update', help='更新股票数据')
@@ -202,18 +204,72 @@ def handle_analyzer(args):
                 end_date=args.end_date, 
                 days=args.days
             )
+        elif analyzer_type == 'news':
+            from analyzer.news_analyzer import NewsAnalyzer
+            # 处理网站参数
+            sites = None
+            if args.sites:
+                sites = [site.strip() for site in args.sites.split(',')]
+            
+            # 获取股票名称，用于搜索
+            from data.stock_data import StockData
+            stock_data = StockData()
+            stock_info = stock_data.get_stock_info(stock_code)
+            stock_name = stock_info.get('name') if stock_info else None
+            
+            analyzer = NewsAnalyzer(
+                stock_code=stock_code,
+                days=args.days
+            )
+            
+            # 执行新闻分析
+            result = analyzer.analyze(
+                stock_code=stock_code, 
+                stock_name=stock_name,
+                max_results=args.max_results,
+                days=args.days, 
+                sites=sites
+            )
+            
+            # 格式化输出
+            output = analyzer.format_output(result)
+            print(output)
+            
+            # 保存结果
+            if args.output:
+                output_file = args.output
+                if not output_file.endswith('.txt'):
+                    output_file += '.txt'
+                
+                # 确保output目录存在
+                os.makedirs('output', exist_ok=True)
+                output_path = os.path.join('output', output_file)
+                
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(output)
+                    # 保存完整的新闻信息
+                    f.write("\n\n完整新闻列表:\n")
+                    for i, news in enumerate(result['news'], 1):
+                        f.write(f"{i}. {news['title']}\n")
+                        f.write(f"   链接: {news['link']}\n")
+                        f.write(f"   摘要: {news['snippet']}\n\n")
+                
+                logger.info(f"分析结果已保存到: {output_path}")
+                
+            return
         else:
             logger.error(f"未知的分析器类型: {analyzer_type}")
             return
         
-        # 执行分析
-        result = analyzer.run_analysis(save_path=args.output)
-        
-        if result:
-            # 输出图表路径
-            logger.info(f"处理完成")
-        else:
-            logger.error("分析失败，未返回结果")
+        # 执行分析 (news分析器已经在上面单独处理)
+        if analyzer_type != 'news':
+            result = analyzer.run_analysis(save_path=args.output)
+            
+            if result:
+                # 输出图表路径
+                logger.info(f"处理完成")
+            else:
+                logger.error("分析失败，未返回结果")
     except Exception as e:
         logger.error(f"执行分析过程中出错: {str(e)}")
 
