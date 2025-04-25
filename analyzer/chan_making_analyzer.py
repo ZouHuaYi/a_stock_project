@@ -38,7 +38,9 @@ class ChanMakingAnalyzer(BaseAnalyzer):
     5. 背驰和共振判断
     """
     
-    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
+    def __init__(self, stock_code: str, stock_name: str = None, 
+                 start_date: Union[str, datetime] = None,
+                 end_date: Union[str, datetime] = None, 
                  days: int = 730, levels: List[str] = None):
         """
         初始化缠论分析器
@@ -46,11 +48,12 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         参数:
             stock_code (str): 股票代码
             stock_name (str, 可选): 股票名称
+            start_date (str 或 datetime, 可选): 开始日期，用于回测
             end_date (str 或 datetime, 可选): 结束日期
             days (int, 可选): 回溯天数，默认为730天，确保有足够的数据
             levels (List[str], 可选): 要分析的周期级别，默认为["daily", "30min", "5min"]
         """
-        super().__init__(stock_code, stock_name, end_date, days)
+        super().__init__(stock_code, stock_name, end_date, days, start_date)
         
         # 设置分析周期级别
         self.levels = levels if levels else ["daily", "30min", "5min"]
@@ -1527,7 +1530,6 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         min30_analysis = "无数据"
         min5_analysis = "无数据"
         sup_res = {}
-        
         # 获取支撑压力位
         if "daily" in self.level_data and not self.level_data["daily"].empty:
             from utils.indicators import calculate_support_resistance

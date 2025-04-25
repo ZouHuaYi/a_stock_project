@@ -20,7 +20,8 @@ logger = get_logger(__name__)
 class BaseAnalyzer:
     """分析器基类，提供基本的数据获取和处理功能"""
     
-    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, days: int = None):
+    def __init__(self, stock_code: str, stock_name: str = None, end_date: Union[str, datetime] = None, 
+                days: int = None, start_date: Union[str, datetime] = None):
         """
         初始化基础分析器
         
@@ -29,6 +30,7 @@ class BaseAnalyzer:
             stock_name (str, 可选): 股票名称，如不提供则使用股票代码
             end_date (str 或 datetime, 可选): 结束日期，默认为当前日期 格式是 YYYY-MM-DD
             days (int, 可选): 回溯天数，默认使用配置中的默认值
+            start_date (str 或 datetime, 可选): 开始日期，优先级高于days参数计算的开始日期，用于回测
         """
         self.stock_code = stock_code
         self.daily_data = pd.DataFrame() # 股票日线数据
@@ -49,13 +51,28 @@ class BaseAnalyzer:
                 self.end_date = end_date
         else:
             self.end_date = datetime.now()
+        
+        # 处理start_date参数
+        if start_date:
+            if isinstance(start_date, str):
+                try:
+                    self.start_date = datetime.strptime(start_date, '%Y-%m-%d')
+                except ValueError:
+                    logger.warning(f"开始日期格式错误 '{start_date}'，将使用days参数计算开始日期")
+                    # 设置回溯天数
+                    self.days = days if days is not None else ANALYZER_CONFIG.get('default_days')
+                    # 计算开始日期
+                    self.start_date = self.end_date - timedelta(days=self.days)
+            else:
+                self.start_date = start_date
+                # 如果提供了start_date，计算实际的days
+                self.days = (self.end_date - self.start_date).days
+        else:
+            # 设置回溯天数
+            self.days = days if days is not None else ANALYZER_CONFIG.get('default_days')
+            # 计算开始日期
+            self.start_date = self.end_date - timedelta(days=self.days)
             
-        # 设置回溯天数
-        self.days = days if days is not None else ANALYZER_CONFIG.get('default_days')
-        
-        # 计算开始日期
-        self.start_date = self.end_date - timedelta(days=self.days)
-        
         # 日期字符串格式
         self.end_date_str = self.end_date.strftime('%Y%m%d')
         self.start_date_str = self.start_date.strftime('%Y%m%d')
@@ -96,6 +113,9 @@ class BaseAnalyzer:
         """
         从AkShare获取股票日线数据，并计算技术指标
         
+        参数:
+            period (str): 数据周期，例如"daily"、"weekly"等
+            
         返回:
             pd.DataFrame: 股票日线数据（含技术指标）
         """
@@ -107,22 +127,42 @@ class BaseAnalyzer:
             # 获取历史数据
             years = self.days // 365 + 1 # 向上取整，确保获取足够的数据
             
+            # 最多获取5年数据，保证有足够的历史数据
+            years = min(years, 5)
+            
+            # 获取数据
             df = akshare.get_stock_history(
                 stock_code=self.stock_code,
                 period=period,
                 years=years,
                 adjust="qfq"  # 前复权
             )
-            name = akshare.get_stock_name(self.stock_code)
+            
+            # 更新股票名称
+            if not self.stock_name or self.stock_name == self.stock_code:
+                name = akshare.get_stock_name(self.stock_code)
+                if name:
+                    self.stock_name = name
+            else:
+                name = self.stock_name
+                
             # 获取的数据有可能比自己需要的时间长
             if isinstance(df, pd.DataFrame) and not df.empty:
-                # 按照回溯天数筛选
+                # 按照日期范围筛选，支持指定的开始和结束日期
+                start_date_str = self.start_date.strftime('%Y-%m-%d')
+                end_date_str = self.end_date.strftime('%Y-%m-%d')
+                
                 if 'trade_date' in df.columns:
-                    df = df[(df['trade_date'] >= self.start_date.strftime('%Y-%m-%d')) & 
-                           (df['trade_date'] <= self.end_date.strftime('%Y-%m-%d'))]
+                    df = df[(df['trade_date'] >= start_date_str) & 
+                           (df['trade_date'] <= end_date_str)]
                     df.set_index('trade_date', inplace=True)
+                elif df.index.name == 'trade_date':
+                    # 如果已经将trade_date设置为索引
+                    df = df[(df.index >= start_date_str) & 
+                           (df.index <= end_date_str)]
+                
                 df['stock_name'] = name
-                logger.info(f"成功获取 {len(df)} 条 {self.stock_code} 数据")
+                logger.info(f"成功获取 {len(df)} 条 {self.stock_code} 数据，时间范围: {start_date_str} 至 {end_date_str}")
                 return df
             else:
                 logger.warning(f"未找到股票 {self.stock_code} 的数据")

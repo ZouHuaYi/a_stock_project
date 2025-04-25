@@ -6,6 +6,7 @@ import os
 import sys
 from datetime import datetime
 import re
+import json
 
 # 导入日志
 from utils.logger import setup_logger
@@ -62,6 +63,17 @@ def parse_args():
                               default='business', nargs='?', help='汇总分析类型')
     collect_parser.add_argument('--date', help='指定日期(格式：YYYYMMDD)，默认为当天')
     collect_parser.add_argument('--output', help='输出文件名(不含扩展名)')
+    
+    # 添加缠论T+0训练子命令
+    chantrain_parser = subparsers.add_parser('chantrain', help='缠论T+0训练系统')
+    chantrain_parser.add_argument('stock_code', help='股票代码，如：000001、600001等6位数字')
+    chantrain_parser.add_argument('--initial-capital', type=float, default=100000.0, help='初始资金，默认10万')
+    chantrain_parser.add_argument('--days', type=int, default=10, help='训练天数，默认10天')
+    chantrain_parser.add_argument('--focus-level', choices=['1min', '5min', '30min'], default='1min', help='主要关注级别')
+    chantrain_parser.add_argument('--interactive', action='store_true', help='是否进行交互式训练')
+    chantrain_parser.add_argument('--backtest', action='store_true', help='启用回测模式，使用历史数据进行策略回测')
+    chantrain_parser.add_argument('--start-date', help='回测开始日期，格式：YYYY-MM-DD，默认为最近交易日前30天')
+    chantrain_parser.add_argument('--end-date', help='回测结束日期，格式：YYYY-MM-DD，默认为最近交易日')
     
     # 解析命令行参数
     args = parser.parse_args()
@@ -306,23 +318,157 @@ def handle_collect(args):
         logger.error(f"执行汇总分析过程中出错: {str(e)}")
 
 
+def handle_chantrain(args):
+    """
+    处理缠论T+0训练命令
+    
+    参数:
+        args: 命令行参数
+    """
+    try:
+        from work.chan_work import ChanWorkTrainer
+        
+        # 解析参数
+        stock_code = args.stock_code
+        initial_capital = args.initial_capital
+        days = args.days
+        focus_level = args.focus_level
+        interactive = args.interactive
+        backtest = args.backtest
+        start_date = args.start_date if hasattr(args, 'start_date') else None
+        end_date = args.end_date if hasattr(args, 'end_date') else None
+        
+        # 创建训练器实例
+        trainer = ChanWorkTrainer(
+            stock_code=stock_code,
+            initial_capital=initial_capital,
+            day_limit=days,
+            focus_level=focus_level
+        )
+        
+        logger.info(f"开始缠论T+0训练，股票代码: {stock_code}, 初始资金: {initial_capital}, 关注级别: {focus_level}")
+        
+        # 根据模式选择执行方法
+        if backtest:
+            # 回测模式
+            logger.info(f"执行回测模式，开始日期: {start_date}, 结束日期: {end_date}")
+            result = trainer.run_backtest(start_date=start_date, end_date=end_date)
+        elif interactive:
+            # 交互式训练模式
+            logger.info("执行交互式训练模式")
+            result = trainer.run_interactive_training()
+        else:
+            # 普通训练模式
+            logger.info("执行普通训练模式")
+            result = trainer.run_training()
+        
+        if result:
+            # 输出训练结果摘要
+            profit_rate = result.get('profit_rate', 0)
+            total_trades = result.get('total_trades', 0)
+            win_rate = result.get('win_rate', 0)
+            
+            logger.info(f"缠论T+0训练完成 - 收益率: {profit_rate:.2f}%, 交易次数: {total_trades}, 胜率: {win_rate:.2f}%")
+            return True
+        else:
+            logger.error("缠论T+0训练失败")
+            return False
+    except Exception as e:
+        logger.error(f"执行缠论T+0训练时出错: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def handle_chan_backtest(args):
+    """
+    处理缠论回测命令
+    
+    参数:
+        args: 命令行参数
+    """
+    try:
+        from work.chan_work import ChanWorkTrainer
+        
+        trainer = ChanWorkTrainer()
+        
+        # 解析日期参数
+        start_date = args.start_date if hasattr(args, 'start_date') else None
+        end_date = args.end_date if hasattr(args, 'end_date') else None
+        
+        # 解析股票代码参数
+        stock_code = args.stock_code if hasattr(args, 'stock_code') else None
+        
+        # 如果未指定股票代码，则使用配置文件中的股票列表
+        if not stock_code:
+            from config.config_manager import ConfigManager
+            config = ConfigManager()
+            stock_list = config.get_stock_list()
+            if not stock_list:
+                logger.error("未指定股票代码且配置文件中不存在股票列表")
+                return False
+        else:
+            stock_list = [stock_code]
+        
+        # 执行回测
+        results = {}
+        for stock in stock_list:
+            logger.info(f"开始对 {stock} 进行缠论回测...")
+            result = trainer.run_backtest(
+                stock_code=stock,
+                start_date=start_date,
+                end_date=end_date
+            )
+            results[stock] = result
+            logger.info(f"{stock} 回测完成, 结果: {result}")
+        
+        # 汇总并保存结果
+        output_file = args.output if hasattr(args, 'output') else "chan_backtest_results.json"
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"缠论回测结果已保存到 {output_file}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"执行缠论回测时出错: {str(e)}")
+        traceback.print_exc()
+        return False
+
+
 def main():
-    """
-    主函数，入口点
-    """
+    """主函数，命令行入口点"""
     # 解析命令行参数
     args = parse_args()
     
-    # 根据命令执行相应功能
-    if args.command == 'selector':
-        handle_select(args)
-    elif args.command == 'analyzer':
-        handle_analyzer(args)
-    elif args.command == 'update':
-        handle_update(args)
-    elif args.command == 'collect':
-        handle_collect(args)
-    else:
-        # 如果没有指定命令，显示帮助
-        print("请指定要执行的命令，使用 -h 或 --help 获取帮助")
-        sys.exit(1) 
+    # 根据命令分发处理
+    try:
+        if args.command == 'selector':
+            # 选股
+            handle_select(args)
+        elif args.command == 'analyzer':
+            # 分析
+            handle_analyzer(args)
+        elif args.command == 'update':
+            # 更新数据
+            handle_update(args)
+        elif args.command == 'collect':
+            # 汇总分析
+            handle_collect(args)
+        elif args.command == 'chantrain':
+            # 缠论T+0训练
+            handle_chantrain(args)
+        elif args.command == 'chan_backtest':
+            # 缠论回测
+            handle_chan_backtest(args)
+        else:
+            print("请指定命令: selector, analyzer, update, collect, 或 chantrain")
+            print("使用 -h 或 --help 查看帮助")
+    except KeyboardInterrupt:
+        logger.info("程序被用户中断")
+        print("\n程序已终止")
+    except Exception as e:
+        logger.error(f"执行命令时出错: {str(e)}")
+        print(f"执行命令时出错: {str(e)}")
+        import traceback
+        traceback.print_exc() 
