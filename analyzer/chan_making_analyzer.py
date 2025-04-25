@@ -51,12 +51,12 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             start_date (str 或 datetime, 可选): 开始日期，用于回测
             end_date (str 或 datetime, 可选): 结束日期
             days (int, 可选): 回溯天数，默认为730天，确保有足够的数据
-            levels (List[str], 可选): 要分析的周期级别，默认为["daily", "30min", "5min"]
+            levels (List[str], 可选): 要分析的周期级别，默认为["daily", "30min", "5min", "1min"]
         """
         super().__init__(stock_code, stock_name, end_date, days, start_date)
         
         # 设置分析周期级别
-        self.levels = levels if levels else ["daily", "30min", "5min"]
+        self.levels = levels if levels else ["daily", "30min", "5min", "1min"]
         
         # 各级别数据字典
         self.level_data = {}
@@ -1529,6 +1529,7 @@ class ChanMakingAnalyzer(BaseAnalyzer):
         daily_analysis = "无数据"
         min30_analysis = "无数据"
         min5_analysis = "无数据"
+        min1_analysis = "无数据"
         sup_res = {}
         # 获取支撑压力位
         if "daily" in self.level_data and not self.level_data["daily"].empty:
@@ -1559,6 +1560,12 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             min5_signal = self.trend_matrix.loc["5min", "signal"] if "5min" in self.trend_matrix.index else None
             
             min5_analysis = f"趋势:{min5_trend}, 信号:{min5_signal if min5_signal else '无'}"
+
+        if "1min" in self.level_data and not self.level_data["1min"].empty:
+            min1_trend = self.trend_matrix.loc["1min", "trend"] if "1min" in self.trend_matrix.index else "unknown"
+            min1_signal = self.trend_matrix.loc["1min", "signal"] if "1min" in self.trend_matrix.index else None
+            
+            min1_analysis = f"趋势:{min1_trend}, 信号:{min1_signal if min1_signal else '无'}"
         
         current_price = self.level_data["daily"].iloc[-1]['close']
         # 构建LLM提示词
@@ -1573,9 +1580,11 @@ class ChanMakingAnalyzer(BaseAnalyzer):
             1. 日线级别：{daily_analysis}
             2. 30分钟级别：{min30_analysis} 
             3. 5分钟级别：{min5_analysis}
-            4. 关键位置：支撑{sup_res.get('support', [])} 压力{sup_res.get('resistance', [])}
+            4. 1分钟级别：{min1_analysis}
+            5. 关键位置：支撑{sup_res.get('support', [])} 压力{sup_res.get('resistance', [])}
 
             请用专业术语回答：
+            - 各个层级的递归关系
             - 当前多级别联立状态
             - 最优交易策略
             - 风控位设置依据"""
@@ -1605,7 +1614,8 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                 'levels': {
                     'daily': daily_analysis,
                     '30min': min30_analysis,
-                    '5min': min5_analysis
+                    '5min': min5_analysis,
+                    '1min': min1_analysis
                 },
                 'support_resistance': sup_res
             }
@@ -1620,7 +1630,8 @@ class ChanMakingAnalyzer(BaseAnalyzer):
                 'levels': {
                     'daily': daily_analysis,
                     '30min': min30_analysis,
-                    '5min': min5_analysis
+                    '5min': min5_analysis,
+                    '1min': min1_analysis
                 },
                 'support_resistance': sup_res
             }
