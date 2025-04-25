@@ -21,6 +21,9 @@ from config import API_CONFIG
 import requests
 from requests.exceptions import RequestException
 
+# 导入ScrapingBee API
+from utils.scraping_api import get_scraping_api, ScrapingBeeAPI
+
 # 配置日志
 logger = logging.getLogger(__name__)
 
@@ -38,8 +41,6 @@ class GoogleSearchAPI:
         初始化Google搜索API客户端
         
         参数:
-            api_key: Google API密钥，如果为None则从环境变量GOOGLE_API_KEY获取
-            cx: 自定义搜索引擎ID，如果为None则从环境变量GOOGLE_SEARCH_CX获取
             max_retries: 请求失败时的最大重试次数
             retry_delay: 重试间隔时间(秒)
         """
@@ -53,6 +54,9 @@ class GoogleSearchAPI:
         
         if not self.cx:
             logger.warning("自定义搜索引擎ID未设置，请设置GOOGLE_SEARCH_CX环境变量或在初始化时提供")
+        
+        # 初始化ScrapingBee API
+        self.scraping_api = get_scraping_api()
     
     def search(
         self, 
@@ -196,7 +200,9 @@ class GoogleSearchAPI:
         stock_name: Optional[str] = None,
         max_results: int = 10,
         days: Optional[int] = 7,
-        site_list: Optional[List[str]] = None
+        site_list: Optional[List[str]] = None,
+        deep_crawl: bool = False,
+        deep_crawl_limit: int = 3
     ) -> List[Dict[str, Any]]:
         """
         搜索股票相关信息
@@ -207,6 +213,8 @@ class GoogleSearchAPI:
             max_results: 最大结果数
             days: 限制为最近几天的内容，None表示不限制
             site_list: 限制搜索的网站列表，如["finance.sina.com.cn", "finance.qq.com"]
+            deep_crawl: 是否使用ScrapingBee对搜索结果进行深度爬取
+            deep_crawl_limit: 深度爬取的最大结果数
             
         返回:
             搜索结果列表
@@ -248,7 +256,45 @@ class GoogleSearchAPI:
                 date_restrict=date_restrict
             )
             
-        return results[:max_results]
+        # 限制结果数量
+        results = results[:max_results]
+        
+        # 如果启用深度爬取，使用ScrapingBee爬取内容
+        if deep_crawl and results:
+            # 检查ScrapingBee API是否可用
+            if not self.scraping_api.api_key:
+                logger.warning("ScrapingBee API密钥未设置，无法进行深度爬取")
+            else:
+                logger.info(f"开始对{len(results[:deep_crawl_limit])}个搜索结果进行深度爬取...")
+                try:
+                    # 最多爬取deep_crawl_limit个结果，避免API调用过多
+                    results = self.scraping_api.process_search_results(
+                        search_results=results, 
+                        max_pages=deep_crawl_limit
+                    )
+                except Exception as e:
+                    logger.error(f"深度爬取过程中出错: {str(e)}")
+            
+        return results
+    
+    def extract_financial_news_content(self, url: str) -> Dict[str, Any]:
+        """
+        提取财经新闻内容
+        
+        参数:
+            url: 新闻URL
+            
+        返回:
+            提取的内容字典
+        """
+        if not self.scraping_api.api_key:
+            return {"error": "ScrapingBee API密钥未设置，无法提取内容"}
+            
+        try:
+            return self.scraping_api.extract_financial_news(url)
+        except Exception as e:
+            logger.error(f"提取新闻内容时出错: {str(e)}")
+            return {"error": str(e)}
 
 
 def get_google_search_api() -> GoogleSearchAPI:
@@ -258,10 +304,7 @@ def get_google_search_api() -> GoogleSearchAPI:
     返回:
         GoogleSearchAPI实例
     """
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    cx = os.environ.get("GOOGLE_SEARCH_CX")
-    
-    return GoogleSearchAPI(api_key=api_key, cx=cx)
+    return GoogleSearchAPI()
 
 
 # 简单使用示例
@@ -279,7 +322,9 @@ if __name__ == "__main__":
             stock_name="贵州茅台",
             max_results=5,
             days=7,
-            site_list=["finance.sina.com.cn", "finance.eastmoney.com"]
+            site_list=["finance.sina.com.cn", "finance.eastmoney.com"],
+            deep_crawl=True,
+            deep_crawl_limit=2
         )
         
         print(f"找到 {len(results)} 条结果:")
@@ -287,6 +332,12 @@ if __name__ == "__main__":
             print(f"{i}. {result['title']}")
             print(f"   链接: {result['link']}")
             print(f"   摘要: {result['snippet']}")
+            
+            # 如果有深度爬取的内容
+            if 'extracted_content' in result and result.get('extraction_success', False):
+                content = result.get('extracted_content', '')
+                print(f"   内容长度: {result.get('content_length', 0)} 字符")
+                print(f"   内容预览: {content[:100]}..." if content else "   无内容")
             print()
             
     except Exception as e:

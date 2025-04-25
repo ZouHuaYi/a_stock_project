@@ -50,6 +50,10 @@ class NewsAnalyzer(BaseAnalyzer):
             'business.sohu.com',
             'money.163.com'
         ])
+        
+        # 深度爬取配置
+        self.enable_deep_crawl = kwargs.get('enable_deep_crawl', True)
+        self.deep_crawl_limit = kwargs.get('deep_crawl_limit', 3)
 
     def analyze(self, stock_code: str, stock_name: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """
@@ -78,6 +82,10 @@ class NewsAnalyzer(BaseAnalyzer):
         days = kwargs.get('days', self.default_days)
         sites = kwargs.get('sites', self.default_sites)
         
+        # 获取深度爬取参数
+        deep_crawl = kwargs.get('deep_crawl', self.enable_deep_crawl)
+        deep_crawl_limit = kwargs.get('deep_crawl_limit', self.deep_crawl_limit)
+        
         try:
             # 获取股票相关新闻
             news_results = self.search_api.search_stock_info(
@@ -85,18 +93,22 @@ class NewsAnalyzer(BaseAnalyzer):
                 stock_name=stock_name,
                 max_results=max_results,
                 days=days,
-                site_list=sites
+                site_list=sites,
+                deep_crawl=deep_crawl,
+                deep_crawl_limit=deep_crawl_limit
             )
             
             # 对新闻进行简单分析
-            sentiment, keyword_stats = self._analyze_news_content(news_results)
+            sentiment, keyword_stats, content_summary = self._analyze_news_content(news_results)
             
             return {
                 'status': 'success',
                 'message': f'找到 {len(news_results)} 条相关新闻',
                 'news': news_results,
                 'sentiment': sentiment,
-                'keyword_stats': keyword_stats
+                'keyword_stats': keyword_stats,
+                'content_summary': content_summary,
+                'has_deep_content': any('extracted_content' in item for item in news_results)
             }
             
         except Exception as e:
@@ -107,7 +119,7 @@ class NewsAnalyzer(BaseAnalyzer):
                 'news': []
             }
     
-    def _analyze_news_content(self, news_results: List[Dict[str, Any]]) -> Tuple[str, Dict[str, int]]:
+    def _analyze_news_content(self, news_results: List[Dict[str, Any]]) -> Tuple[str, Dict[str, int], str]:
         """
         简单分析新闻内容，提取关键词和情感
         
@@ -115,10 +127,10 @@ class NewsAnalyzer(BaseAnalyzer):
             news_results: 新闻结果列表
             
         返回:
-            (情感评估, 关键词统计)
+            (情感评估, 关键词统计, 内容总结)
         """
         if not news_results:
-            return "neutral", {}
+            return "neutral", {}, ""
             
         # 正面词汇
         positive_words = [
@@ -137,9 +149,21 @@ class NewsAnalyzer(BaseAnalyzer):
         positive_count = 0
         negative_count = 0
         
-        # 分析所有新闻标题和摘要
+        # 内容总结
+        content_summary = ""
+        has_deep_content = False
+        
+        # 分析所有新闻
         for news in news_results:
+            # 首先使用标题和摘要（基本搜索信息）
             text = (news.get('title', '') + ' ' + news.get('snippet', '')).lower()
+            
+            # 如果有深度爬取的内容，添加到分析文本中
+            if 'extracted_content' in news and news.get('extraction_success', False):
+                has_deep_content = True
+                extracted_content = news.get('extracted_content', '')
+                if extracted_content:
+                    text += ' ' + extracted_content.lower()
             
             # 统计正面词汇
             for word in positive_words:
@@ -160,8 +184,23 @@ class NewsAnalyzer(BaseAnalyzer):
             sentiment = "negative"
         else:
             sentiment = "neutral"
+        
+        # 创建内容总结
+        if has_deep_content:
+            # 整理一个简单的内容总结
+            word_count = sum(len(news.get('extracted_content', '').split()) for news in news_results if 'extracted_content' in news)
+            content_summary = f"已深度爬取{sum(1 for n in news_results if 'extracted_content' in n)}篇新闻，共{word_count}个词。"
             
-        return sentiment, keyword_stats
+            # 添加最长文章的标题
+            longest_article = max(
+                [n for n in news_results if 'extracted_content' in n], 
+                key=lambda x: len(x.get('extracted_content', '')),
+                default=None
+            )
+            if longest_article:
+                content_summary += f"\n最详细的文章：{longest_article.get('title', '')}"
+            
+        return sentiment, keyword_stats, content_summary
     
     def get_related_keywords(self, stock_code: str, stock_name: Optional[str] = None) -> List[str]:
         """
@@ -210,6 +249,11 @@ class NewsAnalyzer(BaseAnalyzer):
             return f"新闻分析失败: {result['message']}"
             
         output = f"新闻分析结果: 找到{len(result['news'])}条相关新闻\n"
+        
+        # 添加内容总结（如果有深度爬取）
+        if result.get('content_summary'):
+            output += f"内容分析: {result['content_summary']}\n"
+            
         output += f"整体情感: "
         
         sentiment = result.get('sentiment', 'neutral')
@@ -232,6 +276,27 @@ class NewsAnalyzer(BaseAnalyzer):
         for i, news in enumerate(result['news'][:5], 1):
             output += f"{i}. {news['title']}\n"
             output += f"   来源: {news['display_link']}\n"
+            
+            # 如果有深度爬取的内容，添加内容预览
+            if 'extracted_content' in news and news.get('extraction_success', False):
+                content = news.get('extracted_content', '')
+                if content:
+                    # 截取前150个字符作为预览
+                    preview = content[:150] + ('...' if len(content) > 150 else '')
+                    output += f"   内容预览: {preview}\n"
+                    
             output += f"   链接: {news['link']}\n\n"
             
-        return output 
+        return output
+    
+    def extract_single_news(self, url: str) -> Dict[str, Any]:
+        """
+        提取单个新闻页面的详细内容
+        
+        参数:
+            url: 新闻URL
+            
+        返回:
+            提取的内容字典
+        """
+        return self.search_api.extract_financial_news_content(url) 

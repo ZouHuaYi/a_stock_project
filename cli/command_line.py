@@ -49,6 +49,10 @@ def parse_args():
     analyzer_parser.add_argument('--ai-type', choices=['gemini', 'openai'], help='AI类型')
     analyzer_parser.add_argument('--sites', help='新闻分析指定网站(逗号分隔)')
     analyzer_parser.add_argument('--max-results', type=int, default=10, help='新闻分析返回的最大结果数')
+    analyzer_parser.add_argument('--deep-crawl', action='store_true', help='启用深度爬取功能')
+    analyzer_parser.add_argument('--no-deep-crawl', action='store_false', dest='deep_crawl', help='禁用深度爬取功能')
+    analyzer_parser.add_argument('--deep-crawl-limit', type=int, default=3, help='深度爬取的最大结果数')
+    analyzer_parser.add_argument('--url', help='提取单个新闻URL的内容')
     
     # 更新数据子命令
     update_parser = subparsers.add_parser('update', help='更新股票数据')
@@ -219,8 +223,51 @@ def handle_analyzer(args):
             
             analyzer = NewsAnalyzer(
                 stock_code=stock_code,
-                days=args.days
+                days=args.days,
+                enable_deep_crawl=args.deep_crawl if hasattr(args, 'deep_crawl') else True,
+                deep_crawl_limit=args.deep_crawl_limit if hasattr(args, 'deep_crawl_limit') else 3
             )
+            
+            # 检查是否是单个URL提取
+            if args.url:
+                logger.info(f"提取单个新闻URL: {args.url}")
+                
+                # 提取新闻内容
+                content_data = analyzer.extract_single_news(args.url)
+                
+                if 'data' in content_data:
+                    # 输出提取结果
+                    data = content_data['data']
+                    output = f"新闻提取结果:\n"
+                    output += f"标题: {data.get('title', '未找到标题')}\n"
+                    output += f"发布日期: {data.get('publish_date', '未找到日期')}\n"
+                    output += f"作者/来源: {data.get('author', '未找到作者')}\n"
+                    output += f"关键词: {data.get('keywords', '未找到关键词')}\n\n"
+                    output += f"内容:\n{data.get('content', '未找到内容')}\n"
+                    
+                    print(output)
+                    
+                    # 保存结果
+                    if args.output:
+                        output_file = args.output
+                        if not output_file.endswith('.txt'):
+                            output_file += '.txt'
+                        
+                        # 确保output目录存在
+                        os.makedirs('output', exist_ok=True)
+                        output_path = os.path.join('output', output_file)
+                        
+                        with open(output_path, 'w', encoding='utf-8') as f:
+                            f.write(output)
+                            
+                        logger.info(f"提取结果已保存到: {output_path}")
+                        
+                else:
+                    logger.error(f"从URL提取内容失败: {args.url}")
+                    if 'error' in content_data:
+                        print(f"错误: {content_data['error']}")
+                
+                return
             
             # 执行新闻分析
             result = analyzer.analyze(
@@ -228,7 +275,9 @@ def handle_analyzer(args):
                 stock_name=stock_name,
                 max_results=args.max_results,
                 days=args.days, 
-                sites=sites
+                sites=sites,
+                deep_crawl=args.deep_crawl if hasattr(args, 'deep_crawl') else True,
+                deep_crawl_limit=args.deep_crawl_limit if hasattr(args, 'deep_crawl_limit') else 3
             )
             
             # 格式化输出
