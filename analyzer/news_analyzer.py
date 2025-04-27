@@ -300,3 +300,139 @@ class NewsAnalyzer(BaseAnalyzer):
             提取的内容字典
         """
         return self.search_api.extract_financial_news_content(url) 
+    
+    def process_single_url(self, url: str, save_path=None) -> Dict[str, Any]:
+        """
+        处理单个URL提取命令并格式化输出
+        
+        参数:
+            url: 需要提取的URL
+            save_path: 保存结果的路径，如果为None则不保存
+            
+        返回:
+            处理结果字典
+        """
+        logger.info(f"提取单个新闻URL: {url}")
+        
+        # 提取新闻内容
+        content_data = self.extract_single_news(url)
+        
+        result = {'status': 'error', 'message': '提取失败'}
+        
+        if 'data' in content_data:
+            # 输出提取结果
+            data = content_data['data']
+            output = f"新闻提取结果:\n"
+            output += f"标题: {data.get('title', '未找到标题')}\n"
+            output += f"发布日期: {data.get('publish_date', '未找到日期')}\n"
+            output += f"作者/来源: {data.get('author', '未找到作者')}\n"
+            output += f"关键词: {data.get('keywords', '未找到关键词')}\n\n"
+            output += f"内容:\n{data.get('content', '未找到内容')}\n"
+            
+            # 添加到结果
+            result = {
+                'status': 'success',
+                'message': '提取成功',
+                'data': data,
+                'formatted_output': output
+            }
+            
+            # 保存结果
+            if save_path:
+                output_file = save_path
+                if not output_file.endswith('.txt'):
+                    output_file += '.txt'
+                
+                # 确保output目录存在
+                os.makedirs('output', exist_ok=True)
+                output_path = os.path.join('output', output_file)
+                
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(output)
+                    
+                logger.info(f"提取结果已保存到: {output_path}")
+                result['output_path'] = output_path
+        else:
+            # 提取失败
+            error_msg = f"从URL提取内容失败: {url}"
+            if 'error' in content_data:
+                error_msg += f" - {content_data['error']}"
+                
+            logger.error(error_msg)
+            result = {
+                'status': 'error',
+                'message': error_msg,
+                'error': content_data.get('error', '未知错误')
+            }
+            
+        return result
+    
+    def run_analysis(self, save_path=None, additional_context=None) -> dict:
+        """
+        运行完整的分析流程
+        
+        参数:
+            save_path: 保存路径，如果为None则不保存结果
+            additional_context: 额外的上下文信息，例如其他分析结果
+            
+        返回:
+            分析结果字典
+        """
+        try:
+            # 获取数据
+            if not self.fetch_data():
+                return {'status': 'error', 'message': '数据获取失败'}
+            
+            # 获取股票名称，用于搜索
+            from data.stock_data import StockData
+            stock_data = StockData()
+            stock_info = stock_data.get_stock_info(self.stock_code)
+            stock_name = stock_info.get('name') if stock_info else None
+            
+            # 执行新闻分析
+            result = self.analyze(
+                stock_code=self.stock_code, 
+                stock_name=stock_name,
+                max_results=self.default_max_results,
+                days=self.days, 
+                sites=self.default_sites,
+                deep_crawl=self.enable_deep_crawl,
+                deep_crawl_limit=self.deep_crawl_limit
+            )
+            
+            # 生成格式化输出
+            output = self.format_output(result)
+            
+            # 如果需要保存结果
+            if save_path:
+                output_file = save_path
+                if not output_file.endswith('.txt'):
+                    output_file += '.txt'
+                
+                # 确保output目录存在
+                os.makedirs('output', exist_ok=True)
+                output_path = os.path.join('output', output_file)
+                
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(output)
+                    # 保存完整的新闻信息
+                    f.write("\n\n完整新闻列表:\n")
+                    for i, news in enumerate(result['news'], 1):
+                        f.write(f"{i}. {news['title']}\n")
+                        f.write(f"   链接: {news['link']}\n")
+                        f.write(f"   摘要: {news['snippet']}\n\n")
+                
+                logger.info(f"分析结果已保存到: {output_path}")
+                result['output_path'] = output_path
+            
+            # 添加格式化输出到结果中
+            result['formatted_output'] = output
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"新闻分析器运行出错: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {'status': 'error', 'message': f'新闻分析失败: {str(e)}'}
+    
