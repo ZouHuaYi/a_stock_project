@@ -21,6 +21,7 @@ A股选股与分析工具 - 主入口文件
 
 import sys
 import os
+import traceback
 from datetime import datetime
 
 # 确保路径正确
@@ -43,8 +44,17 @@ def ensure_directories():
             logger.info(f"创建目录: {dir_path}")
 
 if __name__ == "__main__":
-    # 确保目录存在
-    ensure_directories()
-    
-    # 执行主函数
-    main()
+    try:
+        print("A股选股与分析工具 - 启动...")
+        
+        # 确保目录存在
+        ensure_directories()
+        
+        # 执行主函数
+        print("执行主函数...")
+        main()
+        
+    except Exception as e:
+        print(f"程序运行出错: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)

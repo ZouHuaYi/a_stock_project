@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 import re
 import json
+import traceback
 
 # 导入日志
 from utils.logger import setup_logger
@@ -161,6 +162,11 @@ def handle_analyzer(args):
     
     logger.info(f"开始执行{analyzer_type}分析，股票代码: {stock_code}...")
     
+    # 对于news分析，使用完全独立的处理流程，减少依赖关系
+    if analyzer_type == 'news':
+        handle_news_analyzer(args)
+        return
+    
     try:
         # 根据选择的分析器类型导入相应的分析器
         if analyzer_type == 'volprice':
@@ -197,56 +203,132 @@ def handle_analyzer(args):
                 end_date=args.end_date, 
                 days=args.days
             )
-        elif analyzer_type == 'news':
-            from analyzer.news_analyzer import NewsAnalyzer
-            
-            # 创建分析器实例的参数
-            analyzer_params = {
-                'stock_code': stock_code,
-                'days': args.days,
-                'max_news_results': args.max_results,
-                'enable_deep_crawl': args.deep_crawl if hasattr(args, 'deep_crawl') else True,
-                'deep_crawl_limit': args.deep_crawl_limit if hasattr(args, 'deep_crawl_limit') else 3
-            }
-            
-            # 添加网站参数
-            if args.sites:
-                analyzer_params['news_sites'] = [site.strip() for site in args.sites.split(',')]
-            
-            analyzer = NewsAnalyzer(**analyzer_params)
-            
-            # 检查是否是单个URL提取
-            if args.url:
-                # 使用分析器处理单个URL
-                result = analyzer.process_single_url(args.url, save_path=args.output)
-                
-                # 打印格式化输出
-                if 'formatted_output' in result:
-                    print(result['formatted_output'])
-                
-                # 处理错误情况
-                if result['status'] == 'error':
-                    if 'error' in result:
-                        print(f"错误: {result['error']}")
-                
-                return
         else:
             logger.error(f"未知的分析器类型: {analyzer_type}")
             return
         
         # 执行分析
-        result = analyzer.run_analysis(save_path=args.output)
-        
-        if result:
-            # 如果是新闻分析器，打印格式化输出
-            if analyzer_type == 'news' and 'formatted_output' in result:
-                print(result['formatted_output'])
-            # 输出处理完成信息
-            logger.info(f"处理完成")
-        else:
-            logger.error("分析失败，未返回结果")
+        try:
+            result = analyzer.run_analysis(save_path=args.output)
+            
+            if result:
+                # 输出处理完成信息
+                logger.info(f"处理完成")
+            else:
+                logger.error("分析失败，未返回结果")
+        except Exception as e:
+            logger.error(f"执行分析run_analysis时出错: {str(e)}")
+            logger.error(traceback.format_exc())
     except Exception as e:
         logger.error(f"执行分析过程中出错: {str(e)}")
+        logger.error(traceback.format_exc())
+
+
+def handle_news_analyzer(args):
+    """
+    处理新闻分析命令（作为独立函数处理）
+    
+    参数:
+        args (argparse.Namespace): 命令行参数
+    """
+    stock_code = args.stock_code
+    
+    try:
+        print(f"开始处理股票 {stock_code} 的新闻分析...")
+        
+        # 单独处理新闻分析
+        # 1. 设置基础参数
+        base_params = {
+            'stock_code': stock_code,
+            'days': args.days,
+            'end_date': args.end_date
+        }
+        
+        # 2. 新闻特有参数
+        news_params = {
+            'max_news_results': args.max_results if hasattr(args, 'max_results') else 10,
+            'enable_deep_crawl': args.deep_crawl if hasattr(args, 'deep_crawl') else True,
+            'deep_crawl_limit': args.deep_crawl_limit if hasattr(args, 'deep_crawl_limit') else 3
+        }
+        
+        # 3. 添加网站参数
+        if args.sites:
+            sites_list = [site.strip() for site in args.sites.split(',')]
+            news_params['news_sites'] = sites_list
+        
+        # 4. 合并所有参数
+        analyzer_params = {**base_params, **news_params}
+        print(f"新闻分析参数: {analyzer_params}")
+        
+        # 5. 检查是否是单个URL提取模式
+        if args.url:
+            from analyzer.news_analyzer import NewsAnalyzer
+            analyzer = NewsAnalyzer(**analyzer_params)
+            
+            print(f"处理单个URL: {args.url}")
+            result = analyzer.process_single_url(args.url, save_path=args.output)
+            
+            # 打印结果
+            if result['status'] == 'success':
+                print(f"URL处理成功: {args.url}")
+                if 'formatted_output' in result:
+                    print(result['formatted_output'])
+            else:
+                print(f"URL处理失败: {result.get('message', '未知错误')}")
+                if 'error' in result:
+                    print(f"错误: {result['error']}")
+            
+            return
+            
+        # 6. 执行完整分析
+        try:
+            # 先导入模块
+            print("导入NewsAnalyzer模块...")
+            from analyzer.news_analyzer import NewsAnalyzer
+            
+            # 创建分析器实例
+            print("创建NewsAnalyzer实例...")
+            analyzer = NewsAnalyzer(**analyzer_params)
+            
+            # 执行分析
+            print("执行run_analysis方法...")
+            result = analyzer.run_analysis(save_path=args.output)
+            
+            # 处理结果
+            if result:
+                print("分析完成，打印结果")
+                # 打印格式化输出
+                if 'formatted_output' in result:
+                    print(result['formatted_output'])
+                
+                # 处理输出路径
+                if 'output_path' in result:
+                    print(f"结果已保存到: {result['output_path']}")
+                
+                # 处理错误结果
+                if result.get('status') == 'error':
+                    print(f"分析失败: {result.get('message', '未知错误')}")
+            else:
+                print("分析返回空结果")
+                
+        except ImportError as e:
+            print(f"导入错误，可能缺少必要的库: {str(e)}")
+            print("您可能需要安装以下库：")
+            print("- jieba: 中文分词库，使用 'pip install jieba' 安装")
+            print("- wordcloud: 词云生成库，使用 'pip install wordcloud' 安装")
+            logger.error(f"缺少必要的库: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+        except Exception as e:
+            print(f"执行新闻分析时出错: {str(e)}")
+            logger.error(f"执行新闻分析时出错: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+    except Exception as e:
+        print(f"处理新闻分析命令时出错: {str(e)}")
+        print(traceback.format_exc())
+        logger.error(f"处理新闻分析命令时出错: {str(e)}")
+        logger.error(traceback.format_exc())
 
 
 def handle_update(args):
@@ -350,32 +432,29 @@ def handle_collect(args):
 
 
 def main():
-    """主函数，命令行入口点"""
-    # 解析命令行参数
-    args = parse_args()
-    
-    # 根据命令分发处理
+    """主函数，处理命令行参数并执行相应操作"""
     try:
+        print("开始执行命令...")
+        
+        # 解析命令行参数
+        args = parse_args()
+        
+        # 处理不同的命令
         if args.command == 'selector':
-            # 选股
             handle_select(args)
         elif args.command == 'analyzer':
-            # 分析
+            print(f"执行分析命令: {args.analyzer_type} {args.stock_code}")
             handle_analyzer(args)
         elif args.command == 'update':
-            # 更新数据
             handle_update(args)
         elif args.command == 'collect':
-            # 汇总分析
             handle_collect(args)
         else:
-            print("请指定命令: selector, analyzer, update, collect")
-            print("使用 -h 或 --help 查看帮助")
-    except KeyboardInterrupt:
-        logger.info("程序被用户中断")
-        print("\n程序已终止")
+            logger.error(f"未知的命令: {args.command}")
+            print(f"未知的命令: {args.command}")
+            
+        print("命令执行完成")
     except Exception as e:
         logger.error(f"执行命令时出错: {str(e)}")
         print(f"执行命令时出错: {str(e)}")
-        import traceback
         traceback.print_exc() 

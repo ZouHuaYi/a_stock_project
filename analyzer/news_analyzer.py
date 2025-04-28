@@ -9,13 +9,66 @@
 
 import os
 import logging
+import traceback
 from typing import Dict, List, Any, Optional, Tuple
 
 from analyzer.base_analyzer import BaseAnalyzer
-from utils.google_api import GoogleSearchAPI, get_google_search_api
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+# 尝试导入jieba分词，如果不存在则提供兼容实现
+try:
+    import jieba
+    logger.debug("成功导入jieba")
+except ImportError:
+    logger.warning("jieba模块未安装，使用简单的分词方法代替")
+    
+    class DummyJieba:
+        """模拟jieba的简单分词实现"""
+        @staticmethod
+        def cut(text, cut_all=False):
+            """简单的按空格分词"""
+            return text.split()
+            
+    jieba = DummyJieba()
+
+# 尝试导入wordcloud，如果不存在则忽略词云生成
+try:
+    import wordcloud
+    HAS_WORDCLOUD = True
+    logger.debug("成功导入wordcloud")
+except ImportError:
+    HAS_WORDCLOUD = False
+    logger.warning("wordcloud模块未安装，词云生成功能将被禁用")
+
+# 尝试导入GoogleSearchAPI，如果失败提供一个空的替代类
+try:
+    from utils.google_api import GoogleSearchAPI, get_google_search_api
+    logger.debug("成功导入GoogleSearchAPI")
+except Exception as e:
+    logger.error(f"导入GoogleSearchAPI失败: {str(e)}")
+    logger.error(traceback.format_exc())
+    
+    # 创建一个模拟的API类
+    class DummyGoogleSearchAPI:
+        """GoogleSearchAPI的替代类，用于处理导入失败情况"""
+        def __init__(self, *args, **kwargs):
+            self.api_key = None
+            self.cx = None
+            logger.warning("使用DummyGoogleSearchAPI替代，所有API调用将返回空结果")
+            
+        def search_stock_info(self, *args, **kwargs):
+            """模拟搜索方法"""
+            return []
+            
+        def extract_financial_news_content(self, *args, **kwargs):
+            """模拟内容提取方法"""
+            return {"status": "error", "error": "GoogleSearchAPI不可用"}
+    
+    def get_google_search_api():
+        """获取模拟API实例"""
+        return DummyGoogleSearchAPI()
 
 class NewsAnalyzer(BaseAnalyzer):
     """
@@ -31,14 +84,42 @@ class NewsAnalyzer(BaseAnalyzer):
         参数:
             **kwargs: 其他参数传递给父类
         """
-        super().__init__(**kwargs)
+        # 从kwargs中提取BaseAnalyzer需要的参数
+        stock_code = kwargs.get('stock_code')
+        stock_name = kwargs.get('stock_name')
+        end_date = kwargs.get('end_date')
+        days = kwargs.get('days')
+        start_date = kwargs.get('start_date')
+        
+        logger.info(f"NewsAnalyzer初始化参数: stock_code={stock_code}, days={days}")
+        
+        # 调用父类初始化方法，只传递父类需要的参数
+        try:
+            super().__init__(
+                stock_code=stock_code,
+                stock_name=stock_name,
+                end_date=end_date,
+                days=days,
+                start_date=start_date
+            )
+            logger.info("BaseAnalyzer初始化完成")
+        except Exception as e:
+            logger.error(f"BaseAnalyzer初始化失败: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
         
         # 初始化Google搜索API
-        self.search_api = get_google_search_api()
-        
-        # 检查API是否可用
-        if not self.search_api.api_key or not self.search_api.cx:
-            logger.warning("Google搜索API未配置，请设置GOOGLE_API_KEY和GOOGLE_SEARCH_CX环境变量")
+        try:
+            self.search_api = get_google_search_api()
+            logger.info("Google搜索API初始化完成")
+            
+            # 检查API是否可用
+            if not self.search_api.api_key or not self.search_api.cx:
+                logger.warning("Google搜索API未配置，请设置GOOGLE_API_KEY和GOOGLE_SEARCH_CX环境变量")
+        except Exception as e:
+            logger.error(f"Google搜索API初始化失败: {str(e)}")
+            logger.error(traceback.format_exc())
+            self.search_api = DummyGoogleSearchAPI()
             
         # 搜索配置
         self.default_max_results = kwargs.get('max_news_results', 10)
@@ -54,6 +135,8 @@ class NewsAnalyzer(BaseAnalyzer):
         # 深度爬取配置
         self.enable_deep_crawl = kwargs.get('enable_deep_crawl', True)
         self.deep_crawl_limit = kwargs.get('deep_crawl_limit', 3)
+        
+        logger.info(f"NewsAnalyzer初始化完成: max_results={self.default_max_results}, deep_crawl={self.enable_deep_crawl}")
 
     def analyze(self, stock_code: str, stock_name: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """
@@ -301,6 +384,16 @@ class NewsAnalyzer(BaseAnalyzer):
         """
         return self.search_api.extract_financial_news_content(url) 
     
+    def fetch_data(self) -> bool:
+        """
+        获取数据，这里不需要额外的数据获取，直接返回True
+        
+        返回:
+            bool: 是否成功获取数据
+        """
+        logger.info(f"NewsAnalyzer 不需要额外的数据获取，直接返回True")
+        return True
+    
     def process_single_url(self, url: str, save_path=None) -> Dict[str, Any]:
         """
         处理单个URL提取命令并格式化输出
@@ -379,60 +472,94 @@ class NewsAnalyzer(BaseAnalyzer):
             分析结果字典
         """
         try:
+            logger.info(f"NewsAnalyzer开始运行分析: {self.stock_code}")
+            
             # 获取数据
+            logger.info("调用fetch_data方法")
             if not self.fetch_data():
+                logger.error("数据获取失败")
                 return {'status': 'error', 'message': '数据获取失败'}
             
+            logger.info("尝试获取股票名称")
             # 获取股票名称，用于搜索
-            from data.stock_data import StockData
-            stock_data = StockData()
-            stock_info = stock_data.get_stock_info(self.stock_code)
-            stock_name = stock_info.get('name') if stock_info else None
+            try:
+                from data.stock_data import StockData
+                stock_data = StockData()
+                logger.info(f"成功创建StockData实例")
+                
+                stock_info = stock_data.get_stock_info(self.stock_code)
+                logger.info(f"获取到股票信息: {stock_info}")
+                
+                stock_name = stock_info.get('name') if stock_info else None
+                logger.info(f"获取到股票名称: {stock_name}")
+            except Exception as e:
+                logger.error(f"获取股票名称时出错: {str(e)}")
+                logger.error(traceback.format_exc())
+                stock_name = None
             
             # 执行新闻分析
-            result = self.analyze(
-                stock_code=self.stock_code, 
-                stock_name=stock_name,
-                max_results=self.default_max_results,
-                days=self.days, 
-                sites=self.default_sites,
-                deep_crawl=self.enable_deep_crawl,
-                deep_crawl_limit=self.deep_crawl_limit
-            )
+            logger.info(f"开始执行新闻分析: {self.stock_code} {stock_name}")
+            try:
+                result = self.analyze(
+                    stock_code=self.stock_code, 
+                    stock_name=stock_name,
+                    max_results=self.default_max_results,
+                    days=self.days, 
+                    sites=self.default_sites,
+                    deep_crawl=self.enable_deep_crawl,
+                    deep_crawl_limit=self.deep_crawl_limit
+                )
+                logger.info(f"新闻分析完成: 状态 {result.get('status')}")
+            except Exception as e:
+                logger.error(f"执行新闻分析时出错: {str(e)}")
+                logger.error(traceback.format_exc())
+                return {'status': 'error', 'message': f'新闻分析失败: {str(e)}'}
             
             # 生成格式化输出
-            output = self.format_output(result)
+            logger.info("生成格式化输出")
+            try:
+                output = self.format_output(result)
+                logger.info("格式化输出生成完成")
+            except Exception as e:
+                logger.error(f"生成格式化输出时出错: {str(e)}")
+                logger.error(traceback.format_exc())
+                output = f"格式化输出失败: {str(e)}"
             
             # 如果需要保存结果
             if save_path:
-                output_file = save_path
-                if not output_file.endswith('.txt'):
-                    output_file += '.txt'
-                
-                # 确保output目录存在
-                os.makedirs('output', exist_ok=True)
-                output_path = os.path.join('output', output_file)
-                
-                with open(output_path, 'w', encoding='utf-8') as f:
-                    f.write(output)
-                    # 保存完整的新闻信息
-                    f.write("\n\n完整新闻列表:\n")
-                    for i, news in enumerate(result['news'], 1):
-                        f.write(f"{i}. {news['title']}\n")
-                        f.write(f"   链接: {news['link']}\n")
-                        f.write(f"   摘要: {news['snippet']}\n\n")
-                
-                logger.info(f"分析结果已保存到: {output_path}")
-                result['output_path'] = output_path
+                logger.info(f"保存分析结果到: {save_path}")
+                try:
+                    output_file = save_path
+                    if not output_file.endswith('.txt'):
+                        output_file += '.txt'
+                    
+                    # 确保output目录存在
+                    os.makedirs('output', exist_ok=True)
+                    output_path = os.path.join('output', output_file)
+                    
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        f.write(output)
+                        # 保存完整的新闻信息
+                        f.write("\n\n完整新闻列表:\n")
+                        for i, news in enumerate(result['news'], 1):
+                            f.write(f"{i}. {news['title']}\n")
+                            f.write(f"   链接: {news['link']}\n")
+                            f.write(f"   摘要: {news['snippet']}\n\n")
+                    
+                    logger.info(f"分析结果已保存到: {output_path}")
+                    result['output_path'] = output_path
+                except Exception as e:
+                    logger.error(f"保存分析结果时出错: {str(e)}")
+                    logger.error(traceback.format_exc())
             
             # 添加格式化输出到结果中
             result['formatted_output'] = output
             
+            logger.info("NewsAnalyzer分析完成")
             return result
             
         except Exception as e:
             logger.error(f"新闻分析器运行出错: {str(e)}")
-            import traceback
             logger.error(traceback.format_exc())
             return {'status': 'error', 'message': f'新闻分析失败: {str(e)}'}
     
